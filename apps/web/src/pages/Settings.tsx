@@ -768,7 +768,7 @@ function ThumbnailsSection() {
       title="Thumbnails"
       description="Deletes every event thumbnail image to reclaim storage. Recordings and events themselves are kept — only the thumbnail images are removed, and they won't be re-downloaded."
     >
-      <Button color="red" outline onClick={() => setConfirming(true)}>
+      <Button color="red" onClick={() => setConfirming(true)}>
         Delete all thumbnails
       </Button>
 
