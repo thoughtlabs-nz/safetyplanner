@@ -87,7 +87,7 @@ export function AppSidebar() {
             {theme === 'dark' ? <SunIcon data-slot="icon" /> : <MoonIcon data-slot="icon" />}
             <SidebarLabel>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</SidebarLabel>
           </SidebarItem>
-          <div className="flex items-center gap-2 px-2 py-1">
+          <div className="flex items-center gap-2 px-2 py-1 text-zinc-950 dark:text-white">
             <UserButton afterSignOutUrl="/" />
             <SidebarLabel>Account</SidebarLabel>
           </div>
