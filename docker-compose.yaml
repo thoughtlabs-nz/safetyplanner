@@ -1,0 +1,65 @@
+# Local Docker packaging for the three long-running services: web (static
+# React build behind nginx), poller (camera Wi-Fi polling + control server),
+# and mqtt-ingest (MQTT -> Convex bridge consumer). Convex itself is NOT in
+# here — both dev (`npx convex dev`) and the production deployment are
+# external, reached via CONVEX_URL.
+#
+# All injected values come from environment variables — put them in a `.env`
+# file next to this compose file (see .env.example) or export them in the
+# shell. Note the web VITE_* values are BUILD args (Vite inlines them into
+# the bundle): changing them needs `docker compose build web`, not a restart.
+#
+# Reaching services on the host Mac from inside a container (e.g. a local
+# `npx convex dev` on 127.0.0.1:3210, or a local MQTT broker): use
+# host.docker.internal instead of localhost in CONVEX_URL / MQTT_URL.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_CONVEX_URL: ${VITE_CONVEX_URL:?set VITE_CONVEX_URL (Convex deployment URL baked into the web bundle)}
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:?set VITE_CLERK_PUBLISHABLE_KEY (Clerk publishable key baked into the web bundle)}
+        # Must be the poller URL AS THE BROWSER SEES IT (thumbnail/file
+        # links are fetched client-side), hence localhost:4100 by default —
+        # not the compose-internal service name.
+        VITE_POLLER_URL: ${VITE_POLLER_URL:-http://localhost:4100}
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+  poller:
+    build:
+      context: .
+      dockerfile: apps/poller/Dockerfile
+    environment:
+      CONVEX_URL: ${CONVEX_URL:?set CONVEX_URL (Convex deployment URL)}
+      STORAGE_PATH: /data/storage
+      CONTROL_PORT: "4100"
+      POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-60000}
+      TIMEOUT_MS: ${TIMEOUT_MS:-10000}
+    ports:
+      - "${POLLER_PORT:-4100}:4100"
+    volumes:
+      # Bind mount (not a named volume) so the existing storage/ contents —
+      # videos, thumbnails, gps files already downloaded — stay usable, and
+      # anything new lands where the non-Docker workflow expects it.
+      - ./storage:/data/storage
+    restart: unless-stopped
+
+  mqtt-ingest:
+    build:
+      context: .
+      dockerfile: apps/mqtt-ingest/Dockerfile
+    environment:
+      CONVEX_URL: ${CONVEX_URL:?set CONVEX_URL (Convex deployment URL)}
+      MQTT_URL: ${MQTT_URL:?set MQTT_URL (e.g. mqtts://broker.example.com:8883)}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:-mqtt-ingest}
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-ddpai}
+      STORAGE_PATH: /data/storage
+    volumes:
+      - ./storage:/data/storage
+    restart: unless-stopped

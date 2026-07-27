@@ -1,0 +1,17 @@
+# Applies to every service build — all three Dockerfiles use the repo root
+# as build context (they need the shared convex/ dir and the workspace
+# package.json layout).
+.git
+.DS_Store
+**/.DS_Store
+node_modules
+**/node_modules
+**/dist
+storage
+.convex
+.claude
+.env
+.env.*
+**/.env
+**/.env.*
+apps/safety-planner-ios

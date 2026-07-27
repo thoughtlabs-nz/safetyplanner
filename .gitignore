@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+storage/
+convex/_generated
+.DS_Store
+
+# Its own separate git repo — never track it here, even as a submodule.
+apps/safety-planner-ios/

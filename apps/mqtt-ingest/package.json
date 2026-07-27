@@ -1,0 +1,25 @@
+{
+  "name": "safety-planner-mqtt-ingest",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "test:publish": "tsx scripts/publish-test-data.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "convex": "^1.17.4",
+    "dotenv": "^16.4.5",
+    "mqtt": "^5.15.2",
+    "tar-stream": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/tar-stream": "^3.1.4",
+    "tsx": "^4.19.2",
+    "typescript": "~5.6.3"
+  }
+}

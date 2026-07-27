@@ -1,0 +1,20 @@
+{
+  "name": "safety-planner",
+  "private": true,
+  "version": "0.0.2",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=safety-planner-web",
+    "dev:poller": "npm run dev --workspace=safety-planner-poller",
+    "dev:mqtt-ingest": "npm run dev --workspace=safety-planner-mqtt-ingest",
+    "dev:convex": "convex dev"
+  },
+  "dependencies": {
+    "convex": "^1.17.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1"
+  }
+}

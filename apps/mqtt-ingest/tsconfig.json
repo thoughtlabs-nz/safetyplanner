@@ -1,0 +1,19 @@
+{
+  // Typecheck-only: this service runs under tsx (dev and start alike), and
+  // emitting was structurally broken anyway — importing
+  // convex/_generated/api.js pulls convex's own .ts sources (settings.ts →
+  // lib/authz.ts) into the program, which can never sit under a src/
+  // rootDir (TS6059). noEmit + no rootDir sidesteps the emit-layout
+  // question entirely while keeping full type coverage.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src", "scripts"]
+}
