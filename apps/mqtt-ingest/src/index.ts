@@ -167,7 +167,10 @@ async function handleThumbnail(cameraId: Id<"cameras">, msg: ThumbnailMessage): 
   if (!recording) return;
   // Already uploaded on a previous sync — thumbnails are immutable per
   // recording, so skip the (re-)upload rather than orphaning storage blobs.
-  if (recording.thumbnailStorageId) return;
+  // Also skip if a bulk "delete all thumbnails" purge cleared this one
+  // (see recordings.purgeThumbnail) — otherwise a re-sent MQTT thumbnail
+  // message would silently repopulate what was just purged.
+  if (recording.thumbnailStorageId || recording.thumbnailDeleted) return;
 
   // Convex file storage rather than local disk: the old thumbnailPath model
   // needed the poller's control server running (and reachable — a problem

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useAction, useConvexAuth, useMutation, useQuery } from 'convex/react'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
@@ -8,11 +8,65 @@ import { Button } from '../components/button'
 import { Input } from '../components/input'
 import { Field, FieldGroup, Label } from '../components/fieldset'
 import { Divider } from '../components/divider'
+import { Dialog, DialogTitle, DialogDescription, DialogActions } from '../components/dialog'
 import { useToast } from '../components/toast'
 import { useAsyncClick } from '../hooks/useAsyncClick'
 
+const POLLER_URL = import.meta.env.VITE_POLLER_URL
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+// Collapsible card wrapper for each settings area — this page was a flat
+// stack of always-expanded sections (Overpass, Cameras, Data volume,
+// Retention, Thumbnails, Speed tolerance), which read as a wall of forms
+// even when you only came here to change one thing. `headerExtra` is for
+// controls that must stay clickable independent of the expand/collapse
+// toggle (e.g. Data volume's Refresh button) — it sits outside the toggle
+// button so it isn't nested inside one.
+function SettingsCard({
+  title,
+  headerExtra,
+  description,
+  defaultOpen = false,
+  children,
+}: {
+  title: string
+  headerExtra?: ReactNode
+  description?: ReactNode
+  defaultOpen?: boolean
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="mt-6 rounded-lg border border-zinc-950/10 dark:border-white/10">
+      <div className="flex items-center justify-between gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex flex-1 items-center gap-2 text-left"
+          aria-expanded={open}
+        >
+          <svg
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            className={`size-4 shrink-0 text-zinc-500 transition-transform dark:text-zinc-400 ${open ? 'rotate-90' : ''}`}
+          >
+            <path fillRule="evenodd" d="M7.21 4.29a1 1 0 0 1 1.41 0l5 5a1 1 0 0 1 0 1.41l-5 5a1 1 0 1 1-1.41-1.41L11.5 10 7.21 5.71a1 1 0 0 1 0-1.41Z" clipRule="evenodd" />
+          </svg>
+          <Subheading>{title}</Subheading>
+        </button>
+        {headerExtra}
+      </div>
+      {open && (
+        <div className="border-t border-zinc-950/10 px-4 pt-4 pb-5 dark:border-white/10">
+          {description && <Text className="mb-4">{description}</Text>}
+          {children}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // Full record — camera identity (name/ssid/camUrl, owned by cameras.ts) plus
@@ -239,15 +293,11 @@ function CamerasSection() {
   const busy = adding || saving || removing || granting || revoking
 
   return (
-    <div className="mt-8">
-      <Subheading>Cameras</Subheading>
-      <Divider className="my-3" />
-      <Text className="mb-4">
-        Each dashcam runs its own Wi-Fi network at the same fixed camera URL, so the network
-        name (SSID) is what identifies which camera the poller is talking to. Wi-Fi/MQTT
-        settings here are what the iOS app fetches on login.
-      </Text>
-
+    <SettingsCard
+      title="Cameras"
+      defaultOpen
+      description="Each dashcam runs its own Wi-Fi network at the same fixed camera URL, so the network name (SSID) is what identifies which camera the poller is talking to. Wi-Fi/MQTT settings here are what the iOS app fetches on login."
+    >
       {devices === undefined ? (
         <Text>Loading...</Text>
       ) : (
@@ -355,7 +405,7 @@ function CamerasSection() {
           </form>
         </>
       )}
-    </div>
+    </SettingsCard>
   )
 }
 
@@ -392,14 +442,21 @@ function DataVolumeSection() {
   }, [])
 
   return (
-    <div className="mt-8">
-      <div className="flex items-center justify-between">
-        <Subheading>Database size</Subheading>
-        <Button plain onClick={refresh} disabled={loading}>
+    <SettingsCard
+      title="Database size"
+      headerExtra={
+        <Button
+          plain
+          onClick={(e) => {
+            e.stopPropagation()
+            refresh()
+          }}
+          disabled={loading}
+        >
           {loading ? 'Refreshing…' : 'Refresh'}
         </Button>
-      </div>
-      <Divider className="my-3" />
+      }
+    >
       {volumes === null ? (
         <Text>Loading...</Text>
       ) : (
@@ -415,7 +472,7 @@ function DataVolumeSection() {
           ))}
         </div>
       )}
-    </div>
+    </SettingsCard>
   )
 }
 
@@ -543,15 +600,17 @@ function RetentionSection() {
   })
 
   return (
-    <div className="mt-8">
-      <Subheading>Data retention</Subheading>
-      <Divider className="my-3" />
-      <Text className="mb-4">
-        GPS fixes and accelerometer samples are recorded at high resolution and add up fast. Points
-        older than "downsample after" are thinned to one every N seconds; points older than "delete
-        after" are removed entirely. Lower granularity keeps more precision but more storage.
-      </Text>
-
+    <SettingsCard
+      title="Data retention"
+      description={
+        <>
+          GPS fixes and accelerometer samples are recorded at high resolution and add up fast.
+          Points older than "downsample after" are thinned to one every N seconds; points older
+          than "delete after" are removed entirely. Lower granularity keeps more precision but
+          more storage.
+        </>
+      }
+    >
       {settings === undefined || form === null ? (
         <Text>Loading...</Text>
       ) : (
@@ -676,7 +735,60 @@ function RetentionSection() {
           </div>
         </form>
       )}
-    </div>
+    </SettingsCard>
+  )
+}
+
+function ThumbnailsSection() {
+  const { toast } = useToast()
+  const purgeAllThumbnails = useAction(api.recordings.purgeAllThumbnails)
+  const [confirming, setConfirming] = useState(false)
+
+  const [handlePurge, purging] = useAsyncClick(async () => {
+    try {
+      const { purged, diskFilenames } = await purgeAllThumbnails({})
+      await Promise.all(
+        diskFilenames.map((filename) =>
+          fetch(`${POLLER_URL}/files/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ category: 'thumbnails', filename }),
+          }).catch(() => undefined),
+        ),
+      )
+      toast(`Deleted ${purged} thumbnail${purged === 1 ? '' : 's'}.`)
+      setConfirming(false)
+    } catch (err) {
+      toast(`Couldn't delete thumbnails: ${errorMessage(err)}`, 'error')
+    }
+  })
+
+  return (
+    <SettingsCard
+      title="Thumbnails"
+      description="Deletes every event thumbnail image to reclaim storage. Recordings and events themselves are kept — only the thumbnail images are removed, and they won't be re-downloaded."
+    >
+      <Button color="red" outline onClick={() => setConfirming(true)}>
+        Delete all thumbnails
+      </Button>
+
+      <Dialog open={confirming} onClose={() => !purging && setConfirming(false)}>
+        <DialogTitle>Delete all thumbnails?</DialogTitle>
+        <DialogDescription>
+          This permanently deletes every event thumbnail image (Convex storage and any local disk
+          copies). Recordings and events stay, and thumbnails won't be re-fetched. This can't be
+          undone.
+        </DialogDescription>
+        <DialogActions>
+          <Button plain onClick={() => setConfirming(false)} disabled={purging}>
+            Cancel
+          </Button>
+          <Button color="red" onClick={handlePurge} disabled={purging}>
+            {purging ? 'Deleting…' : 'Delete all thumbnails'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </SettingsCard>
   )
 }
 
@@ -704,14 +816,10 @@ function SpeedToleranceSection() {
   })
 
   return (
-    <div className="mt-8">
-      <Subheading>Speed tolerance</Subheading>
-      <Divider className="my-3" />
-      <Text className="mb-4">
-        How far above the posted speed limit a fix can be before the Journeys map flags it as
-        over limit — e.g. 10% allows 54 km/h on a 50 km/h road before it's marked speeding.
-      </Text>
-
+    <SettingsCard
+      title="Speed tolerance"
+      description="How far above the posted speed limit a fix can be before the Journeys map flags it as over limit — e.g. 10% allows 54 km/h on a 50 km/h road before it's marked speeding."
+    >
       {settings === undefined || tolerance === null ? (
         <Text>Loading...</Text>
       ) : (
@@ -733,7 +841,7 @@ function SpeedToleranceSection() {
           </div>
         </form>
       )}
-    </div>
+    </SettingsCard>
   )
 }
 
@@ -778,13 +886,10 @@ export default function Settings() {
     <div>
       <Heading>Settings</Heading>
 
-      <div className="mt-6">
-        <Subheading>OpenStreetMap / Overpass API</Subheading>
-        <Divider className="my-3" />
-        <Text className="mb-4">
-          Used by the Journeys map to look up road speed limits. Leave the URL blank to use
-          the public Overpass mirrors only.
-        </Text>
+      <SettingsCard
+        title="OpenStreetMap / Overpass API"
+        description="Used by the Journeys map to look up road speed limits. Leave the URL blank to use the public Overpass mirrors only."
+      >
         {settings === undefined ? (
           <Text>Loading...</Text>
         ) : (
@@ -820,11 +925,12 @@ export default function Settings() {
             </div>
           </form>
         )}
-      </div>
+      </SettingsCard>
 
       <CamerasSection />
       <DataVolumeSection />
       <RetentionSection />
+      <ThumbnailsSection />
       <SpeedToleranceSection />
     </div>
   )

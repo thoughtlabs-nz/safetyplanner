@@ -71,6 +71,11 @@ export default defineSchema({
     // reachable from anywhere, no poller process/tunnel required.
     thumbnailPath: v.optional(v.string()),
     thumbnailStorageId: v.optional(v.id("_storage")),
+    // Set once a bulk "delete all thumbnails" purge has cleared this
+    // recording's thumbnail — mqtt-ingest's thumbnail handler checks this so
+    // a re-sent MQTT thumbnail message doesn't repopulate what was purged
+    // (see recordings.purgeThumbnail and mqtt-ingest's handleThumbnail).
+    thumbnailDeleted: v.optional(v.boolean()),
     startTime: v.number(),
     durationSeconds: v.optional(v.number()),
     sizeBytes: v.optional(v.number()),

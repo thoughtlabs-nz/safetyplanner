@@ -1,5 +1,7 @@
-import { mutation, query } from "./_generated/server";
+import { action, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 
 export const list = query({
   args: {
@@ -168,9 +170,79 @@ export const setThumbnailStorage = mutation({
   },
 });
 
+// Disk filenames are cameraId-prefixed by storage.ts and only recoverable
+// from the stored path — matches journeys.ts's basename helper.
+function basename(filePath: string): string {
+  return filePath.split(/[/\\]/).pop() ?? filePath;
+}
+
+// Walked page by page (not a single .collect()) so a one-off "delete all
+// thumbnails" admin action doesn't blow Convex's per-query read limit on a
+// large recordings table. There's no index for "has a thumbnail", so this
+// scans everything and filters in code.
+export const paginateWithThumbnail = query({
+  args: { cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { cursor }) => {
+    const result = await ctx.db.query("recordings").paginate({ numItems: 200, cursor });
+    const rows = result.page.filter(
+      (r) => !r.thumbnailDeleted && (r.thumbnailPath || r.thumbnailStorageId),
+    );
+    return { rows, isDone: result.isDone, continueCursor: result.continueCursor };
+  },
+});
+
+// Deletes one recording's thumbnail: the Convex storage blob (if any), plus
+// marking thumbnailDeleted so it's never re-fetched (mqtt-ingest's
+// handleThumbnail checks this flag). Returns the legacy on-disk filename, if
+// any, so the caller can ask the poller to delete that file too — Convex
+// functions can't reach the poller's local disk directly.
+export const purgeThumbnail = mutation({
+  args: { id: v.id("recordings") },
+  handler: async (ctx, { id }): Promise<{ diskFilename: string | null }> => {
+    const recording = await ctx.db.get(id);
+    if (!recording) return { diskFilename: null };
+
+    if (recording.thumbnailStorageId) await ctx.storage.delete(recording.thumbnailStorageId);
+    const diskFilename = recording.thumbnailPath ? basename(recording.thumbnailPath) : null;
+
+    await ctx.db.patch(id, {
+      thumbnailPath: undefined,
+      thumbnailStorageId: undefined,
+      thumbnailDeleted: true,
+    });
+    return { diskFilename };
+  },
+});
+
 export const markFailed = mutation({
   args: { id: v.id("recordings"), error: v.string() },
   handler: async (ctx, { id, error }) => {
     await ctx.db.patch(id, { status: "failed", error });
+  },
+});
+
+// Admin bulk cleanup from the Settings screen — purges every recording's
+// thumbnail (Convex storage blob + legacy disk file) to reclaim storage,
+// without touching the recordings/events themselves. Returns the legacy
+// on-disk filenames so the web app can ask the poller to delete those files
+// too (see apps/web Settings.tsx and controlServer.ts's /files/delete).
+export const purgeAllThumbnails = action({
+  args: {},
+  handler: async (ctx): Promise<{ purged: number; diskFilenames: string[] }> => {
+    const diskFilenames: string[] = [];
+    let purged = 0;
+    let cursor: string | null = null;
+    for (;;) {
+      const page: { rows: { _id: Id<"recordings"> }[]; isDone: boolean; continueCursor: string } =
+        await ctx.runQuery(api.recordings.paginateWithThumbnail, { cursor });
+      for (const row of page.rows) {
+        const { diskFilename } = await ctx.runMutation(api.recordings.purgeThumbnail, { id: row._id });
+        if (diskFilename) diskFilenames.push(diskFilename);
+        purged += 1;
+      }
+      if (page.isDone) break;
+      cursor = page.continueCursor;
+    }
+    return { purged, diskFilenames };
   },
 });

@@ -13,15 +13,20 @@ export const list = query({
 });
 
 // For the Dashboard's Recent Events / timeline views — joins each event with
-// its recording's thumbnail so the UI doesn't need filename/download details.
-export const recentWithThumbnails = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+// its recording's thumbnail, filtered to a rolling time window (day/week/
+// month, chosen in the UI) rather than a flat "last N" so the timeline
+// doesn't get skewed by whatever old event happens to fall in an unbounded
+// "most recent" page. `limit` is a safety cap, not the primary control — a
+// busy month-long window could otherwise blow past Convex's per-query read
+// limit.
+export const recentInRangeWithThumbnails = query({
+  args: { startTime: v.number(), limit: v.optional(v.number()) },
+  handler: async (ctx, { startTime, limit }) => {
     const events = await ctx.db
       .query("events")
-      .withIndex("by_timestamp")
+      .withIndex("by_timestamp", (q) => q.gte("timestamp", startTime))
       .order("desc")
-      .take(limit ?? 10);
+      .take(limit ?? 200);
 
     return await Promise.all(
       events.map(async (e) => {
