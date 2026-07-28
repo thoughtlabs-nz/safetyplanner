@@ -4,7 +4,7 @@ import { divIcon } from 'leaflet'
 import { useAction, useQuery } from 'convex/react'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
-import { Heading } from '../components/heading'
+import { Heading, Subheading } from '../components/heading'
 import { Text } from '../components/text'
 import { Listbox, ListboxOption, ListboxLabel } from '../components/listbox'
 import { CameraAvatar } from '../components/cameraAvatar'
@@ -121,6 +121,53 @@ function StatTile({ label, value, sub }: { label: string; value: string; sub?: s
   )
 }
 
+// Every OBD field is independently optional (each comes from its own PID on
+// its own polling interval, and an unsupported one is simply never present),
+// so formatting always has to cope with undefined rather than assuming a
+// value arrived with the rest of the group.
+function fmt(value: number | undefined, digits: number, unit: string): string {
+  return value === undefined ? '—' : `${value.toFixed(digits)} ${unit}`
+}
+
+const KPA_TO_PSI = 0.145038
+
+// The four corners, laid out as they sit on the car so an odd one out is
+// spotted positionally rather than by reading labels.
+function TyrePressures({
+  frontLeft,
+  frontRight,
+  rearLeft,
+  rearRight,
+}: {
+  frontLeft?: number
+  frontRight?: number
+  rearLeft?: number
+  rearRight?: number
+}) {
+  const corner = (kpa: number | undefined, label: string) => (
+    <div className="text-center">
+      <div className="text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">{label}</div>
+      <div className="text-sm font-semibold tabular-nums text-zinc-950 dark:text-white">
+        {kpa === undefined ? '—' : Math.round(kpa)}
+      </div>
+      <div className="text-[10px] tabular-nums text-zinc-500 dark:text-zinc-400">
+        {kpa === undefined ? '' : `${(kpa * KPA_TO_PSI).toFixed(1)} psi`}
+      </div>
+    </div>
+  )
+  return (
+    <div className="col-span-2 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Tyre pressures (kPa)</div>
+      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2">
+        {corner(frontLeft, 'FL')}
+        {corner(frontRight, 'FR')}
+        {corner(rearLeft, 'RL')}
+        {corner(rearRight, 'RR')}
+      </div>
+    </div>
+  )
+}
+
 export default function LiveTracking() {
   const telemetry = useQuery(api.liveTelemetry.listAll)
   const cameras = useQuery(api.cameras.list)
@@ -149,6 +196,20 @@ export default function LiveTracking() {
   const cameraName = (id: Id<'cameras'>) => cameras?.find((c) => c._id === id)?.name ?? 'Unknown camera'
 
   const age = row ? now - row.updatedAt : null
+
+  // How long ago the CAR was read, as opposed to how long ago the phone
+  // reported. These diverge: positions keep publishing at 1Hz whether or not
+  // the OBD dongle is answering, so row freshness says nothing about OBD
+  // freshness. Derived as "how far behind the sample the OBD read was, plus
+  // how old that sample is" — both of those timestamps come from the phone's
+  // clock so the difference cancels any skew, and only the server-side `age`
+  // is compared against the browser's clock, matching how `status` above
+  // deliberately avoids trusting the phone's clock at all.
+  const obdAge =
+    row?.obd?.updatedAt !== undefined && age !== null
+      ? Math.max(0, row.timestamp - row.obd.updatedAt) + age
+      : null
+
   const status: 'live' | 'stale' | 'offline' | 'none' =
     age === null ? 'none' : age < LIVE_THRESHOLD_MS ? 'live' : age < STALE_THRESHOLD_MS ? 'stale' : 'offline'
 
@@ -282,6 +343,95 @@ export default function LiveTracking() {
             value={age !== null ? formatAge(age) : '—'}
             sub={`${row.lat.toFixed(5)}, ${row.lng.toFixed(5)}`}
           />
+        </div>
+      )}
+
+      {/*
+        Only rendered when the phone has actually read the car over its BLE
+        OBD dongle — most vehicles won't have one, and the values are sticky
+        server-side (see convex/liveTelemetry.ts), so this section persists
+        with the last known readings after the car link drops rather than
+        disappearing mid-drive. `obdAge` is what distinguishes those two
+        cases, and is measured against the phone's own reading time rather
+        than the row's updatedAt: positions keep flowing at 1Hz long after
+        the OBD link has gone quiet.
+      */}
+      {row?.obd && (
+        <div className="mt-6">
+          <div className="flex flex-wrap items-center gap-3">
+            <Subheading>Vehicle</Subheading>
+            {obdAge !== null &&
+              (obdAge < LIVE_THRESHOLD_MS ? (
+                <Badge color="green">CONNECTED</Badge>
+              ) : (
+                <Badge color="zinc">LAST SEEN {formatAge(obdAge)}</Badge>
+              ))}
+            {row.obd.gearPosition && <Badge color="blue">{row.obd.gearPosition}</Badge>}
+            {row.obd.ecoMode && <Badge color="lime">ECO</Badge>}
+            {row.obd.ePedalMode && <Badge color="purple">e-PEDAL</Badge>}
+            {row.obd.powerSwitchOn === false && <Badge color="amber">IGNITION OFF</Badge>}
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <StatTile
+              label="Charge"
+              value={row.obd.stateOfChargePct !== undefined ? `${row.obd.stateOfChargePct.toFixed(1)}%` : '—'}
+              sub={
+                row.obd.batteryHealthPct !== undefined
+                  ? `${row.obd.batteryHealthPct.toFixed(1)}% health`
+                  : undefined
+              }
+            />
+            <StatTile
+              label="Range"
+              value={row.obd.rangeRemainingKm !== undefined ? `${Math.round(row.obd.rangeRemainingKm)} km` : '—'}
+            />
+            <StatTile
+              label="Motor"
+              value={row.obd.motorPowerW !== undefined ? `${(row.obd.motorPowerW / 1000).toFixed(1)} kW` : '—'}
+              // Negative traction motor power is the car recovering energy
+              // under braking, not a sensor fault — worth naming, since a
+              // negative kW figure otherwise reads as a bug.
+              sub={
+                row.obd.motorPowerW !== undefined && row.obd.motorPowerW < 0
+                  ? 'regenerating'
+                  : row.obd.rpm !== undefined
+                    ? `${Math.round(row.obd.rpm)} rpm`
+                    : undefined
+              }
+            />
+            <StatTile
+              label="Car speed"
+              value={row.obd.speedKmh !== undefined ? `${Math.round(row.obd.speedKmh)} km/h` : '—'}
+              sub="vehicle, not GPS"
+            />
+            <StatTile
+              label="HV battery"
+              value={fmt(row.obd.batteryVoltage, 1, 'V')}
+              sub={
+                row.obd.batteryCurrentA !== undefined
+                  ? `${row.obd.batteryCurrentA.toFixed(1)} A${
+                      row.obd.batteryCapacityAh !== undefined
+                        ? ` · ${row.obd.batteryCapacityAh.toFixed(1)} Ah`
+                        : ''
+                    }`
+                  : undefined
+              }
+            />
+            <StatTile
+              label="Odometer"
+              value={row.obd.odometerKm !== undefined ? `${Math.round(row.obd.odometerKm).toLocaleString()} km` : '—'}
+            />
+
+            <TyrePressures
+              frontLeft={row.obd.tyrePressureFrontLeftKpa}
+              frontRight={row.obd.tyrePressureFrontRightKpa}
+              rearLeft={row.obd.tyrePressureRearLeftKpa}
+              rearRight={row.obd.tyrePressureRearRightKpa}
+            />
+            <StatTile label="Outside" value={fmt(row.obd.ambientTempC, 1, '°C')} />
+            <StatTile label="12V battery" value={fmt(row.obd.bat12vVoltage, 2, 'V')} />
+          </div>
         </div>
       )}
 

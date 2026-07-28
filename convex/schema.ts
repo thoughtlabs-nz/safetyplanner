@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { obdTelemetryValidator } from "./lib/obdTelemetry";
 
 export default defineSchema({
   // Registered dashcams. Each runs its own local Wi-Fi network at the same
@@ -213,6 +214,12 @@ export default defineSchema({
     gForce: v.optional(v.number()),
     // Peak |g| since the phone's live session started (phone-computed).
     peakG: v.optional(v.number()),
+    // Read from the car itself over a BLE OBD-II dongle, when one is
+    // connected — absent on every sample otherwise, which is the normal
+    // case. Sticky: liveTelemetry.report only overwrites this when a
+    // sample actually carries it, so the last known readings survive the
+    // link dropping mid-drive.
+    obd: v.optional(obdTelemetryValidator),
     // Server receive time — lets the UI distinguish "phone stopped
     // sending" from "phone clock is wrong".
     updatedAt: v.number(),

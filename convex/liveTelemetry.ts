@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { obdTelemetryValidator } from "./lib/obdTelemetry";
 
 // Breadcrumb trail bookkeeping: append a point at most every 5s of sample
 // time, keep ~1 hour of driving. At 720 points × ~4 numbers the row stays a
@@ -21,8 +22,9 @@ export const report = mutation({
     accelZ: v.optional(v.number()),
     gForce: v.optional(v.number()),
     peakG: v.optional(v.number()),
+    obd: v.optional(obdTelemetryValidator),
   },
-  handler: async (ctx, { cameraId, ...sample }) => {
+  handler: async (ctx, { cameraId, obd, ...sample }) => {
     const existing = await ctx.db
       .query("liveTelemetry")
       .withIndex("by_cameraId", (q) => q.eq("cameraId", cameraId))
@@ -34,6 +36,7 @@ export const report = mutation({
       await ctx.db.insert("liveTelemetry", {
         cameraId,
         ...sample,
+        ...(obd ? { obd } : {}),
         updatedAt: now,
         trail: [{ timestamp: sample.timestamp, lat: sample.lat, lng: sample.lng, speedKmh: sample.speedKmh }],
       });
@@ -60,6 +63,12 @@ export const report = mutation({
 
     await ctx.db.patch(existing._id, {
       ...sample,
+      // Only overwrite when the sample actually carried OBD values. Most
+      // samples don't (no dongle, or the car link dropped), and spreading an
+      // absent `obd` into a patch would delete the last known readings
+      // rather than leave them standing — the phone-side snapshot is sticky
+      // for the same reason, and the two must not disagree.
+      ...(obd ? { obd } : {}),
       updatedAt: now,
       trail,
     });

@@ -25,6 +25,7 @@ import type * as gpsRetention from "../gpsRetention.js";
 import type * as http from "../http.js";
 import type * as journeys from "../journeys.js";
 import type * as lib_authz from "../lib/authz.js";
+import type * as lib_obdTelemetry from "../lib/obdTelemetry.js";
 import type * as liveTelemetry from "../liveTelemetry.js";
 import type * as overpass from "../overpass.js";
 import type * as pollEvents from "../pollEvents.js";
@@ -57,6 +58,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   journeys: typeof journeys;
   "lib/authz": typeof lib_authz;
+  "lib/obdTelemetry": typeof lib_obdTelemetry;
   liveTelemetry: typeof liveTelemetry;
   overpass: typeof overpass;
   pollEvents: typeof pollEvents;

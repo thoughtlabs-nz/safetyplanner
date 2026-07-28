@@ -87,6 +87,40 @@ interface LiveTelemetryMessage {
   accelZ?: number;
   gForce?: number;
   peakG?: number;
+  // Present only while an OBD-II BLE dongle is connected to the car, which
+  // is the exception rather than the rule — every consumer must handle its
+  // absence. Note `speedKmh` above is the phone's GPS speed and `obd.speedKmh`
+  // is the car's own speedometer; they are different measurements.
+  obd?: ObdTelemetry;
+}
+
+// Nissan Leaf specific — read over BLE by the iOS app's ObdManager, see
+// apps/safety-planner-ios/Sources/SafetyPlanner/ObdLeafCommands.swift for
+// the PID table these come from. Every field is independently optional
+// because each is polled on its own interval.
+// Field-for-field match with Models.swift's ObdTelemetry.
+interface ObdTelemetry {
+  speedKmh?: number;
+  rpm?: number;
+  motorPowerW?: number;
+  gearPosition?: string;
+  powerSwitchOn?: boolean;
+  bat12vVoltage?: number;
+  ambientTempC?: number;
+  ecoMode?: boolean;
+  ePedalMode?: boolean;
+  odometerKm?: number;
+  rangeRemainingKm?: number;
+  tyrePressureFrontLeftKpa?: number;
+  tyrePressureFrontRightKpa?: number;
+  tyrePressureRearLeftKpa?: number;
+  tyrePressureRearRightKpa?: number;
+  stateOfChargePct?: number;
+  batteryHealthPct?: number;
+  batteryCapacityAh?: number;
+  batteryVoltage?: number;
+  batteryCurrentA?: number;
+  updatedAt?: number;
 }
 
 // Cached rather than looked up per-message — a bridge only ever talks about
@@ -257,6 +291,7 @@ async function handleLive(cameraId: Id<"cameras">, msg: LiveTelemetryMessage): P
     accelZ: msg.accelZ,
     gForce: msg.gForce,
     peakG: msg.peakG,
+    obd: msg.obd,
   });
 }
 
