@@ -11,6 +11,7 @@ import { Divider } from '../components/divider'
 import { Timeline } from '../components/timeline'
 import { Dialog } from '../components/dialog'
 import { Select } from '../components/select'
+import { CameraAvatar } from '../components/cameraAvatar'
 import { useToast } from '../components/toast'
 import { EVENT_TYPE_BADGE_COLOR, EVENT_TYPE_DOT_CLASS } from '../eventTypeColors'
 
@@ -74,23 +75,26 @@ export default function Dashboard() {
         ) : cameras.length === 0 ? (
           <Text>No cameras registered yet. Add one on the Settings page.</Text>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-3">
             {cameras.map((camera) => {
               const status = statuses.find((s) => s.cameraId === camera._id)
               return (
-                <Text key={camera._id}>
-                  <span
-                    className={`mr-2 inline-block size-2.5 rounded-full ${status?.connected ? 'bg-green-500' : 'bg-red-500'}`}
-                  />
-                  <strong className="font-medium">{camera.name}</strong> —{' '}
-                  {status === undefined
-                    ? 'No status reported yet'
-                    : status.connected
-                      ? 'Connected'
-                      : 'Disconnected'}
-                  {status && <> — last poll {new Date(status.lastPollAt).toLocaleString()}</>}
-                  {status?.lastError && <> — {status.lastError}</>}
-                </Text>
+                <div key={camera._id} className="flex items-center gap-3">
+                  <CameraAvatar id={camera._id} name={camera.name} avatarUrl={camera.avatarUrl} size="sm" />
+                  <Text>
+                    <span
+                      className={`mr-2 inline-block size-2.5 rounded-full ${status?.connected ? 'bg-green-500' : 'bg-red-500'}`}
+                    />
+                    <strong className="font-medium">{camera.name}</strong> —{' '}
+                    {status === undefined
+                      ? 'No status reported yet'
+                      : status.connected
+                        ? 'Connected'
+                        : 'Disconnected'}
+                    {status && <> — last poll {new Date(status.lastPollAt).toLocaleString()}</>}
+                    {status?.lastError && <> — {status.lastError}</>}
+                  </Text>
+                </div>
               )
             })}
           </div>

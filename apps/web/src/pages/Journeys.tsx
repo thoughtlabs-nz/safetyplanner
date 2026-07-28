@@ -8,10 +8,11 @@ import { Text } from '../components/text'
 import { Button } from '../components/button'
 import { Divider } from '../components/divider'
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from '../components/table'
-import { Select } from '../components/select'
+import { Listbox, ListboxOption, ListboxLabel } from '../components/listbox'
 import { Badge } from '../components/badge'
 import { Timeline, type TimelineMarker } from '../components/timeline'
 import { Dialog, DialogTitle, DialogDescription, DialogBody, DialogActions } from '../components/dialog'
+import { CameraAvatar } from '../components/cameraAvatar'
 import { useToast } from '../components/toast'
 import { EVENT_TYPE_HEX, EVENT_TYPE_DOT_CLASS, EVENT_TYPE_BADGE_COLOR } from '../eventTypeColors'
 
@@ -792,19 +793,22 @@ export default function Journeys() {
               </Button>
             )}
             {cameras && cameras.length > 1 && (
-              <Select
+              <Listbox
                 value={selectedCameraId}
-                onChange={(e) => setSelectedCameraId(e.target.value)}
+                onChange={setSelectedCameraId}
                 className="max-w-48"
                 aria-label="Filter by camera"
               >
-                <option value="">All cameras</option>
+                <ListboxOption value="">
+                  <ListboxLabel>All cameras</ListboxLabel>
+                </ListboxOption>
                 {cameras.map((camera) => (
-                  <option key={camera._id} value={camera._id}>
-                    {camera.name}
-                  </option>
+                  <ListboxOption key={camera._id} value={camera._id}>
+                    <CameraAvatar id={camera._id} name={camera.name} avatarUrl={camera.avatarUrl} size="sm" data-slot="avatar" />
+                    <ListboxLabel>{camera.name}</ListboxLabel>
+                  </ListboxOption>
                 ))}
-              </Select>
+              </Listbox>
             )}
           </div>
         </div>
@@ -829,6 +833,7 @@ export default function Journeys() {
               <Table>
                 <TableHead>
                   <TableRow>
+                    {cameras && cameras.length > 1 && <TableHeader>Camera</TableHeader>}
                     <TableHeader>Start Time</TableHeader>
                     <TableHeader>Start</TableHeader>
                     <TableHeader>Finish</TableHeader>
@@ -846,6 +851,18 @@ export default function Journeys() {
                       onClick={() => setSelectedStart(t.startTime)}
                       className={`cursor-pointer ${t.startTime === selectedTrip?.startTime ? 'bg-zinc-950/5 dark:bg-white/5' : ''}`}
                     >
+                      {cameras && cameras.length > 1 && (
+                        <TableCell>
+                          {(() => {
+                            const camera = cameras.find((c) => c._id === t.cameraId)
+                            return camera ? (
+                              <CameraAvatar id={camera._id} name={camera.name} avatarUrl={camera.avatarUrl} size="sm" />
+                            ) : (
+                              '—'
+                            )
+                          })()}
+                        </TableCell>
+                      )}
                       <TableCell>{new Date(t.startTime).toLocaleString()}</TableCell>
                       <TableCell>{t.startLocation ?? '—'}</TableCell>
                       <TableCell>{t.endLocation ?? '—'}</TableCell>

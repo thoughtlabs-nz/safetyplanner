@@ -22,6 +22,16 @@ export default defineSchema({
     mqttUsername: v.optional(v.string()),
     mqttPassword: v.optional(v.string()),
     topicPrefix: v.optional(v.string()),
+
+    // Optional user-uploaded avatar photo — stored in Convex file storage,
+    // resolved to a URL wherever a camera is listed (see cameras.list /
+    // devices.myDevices / devices.listAllDevices). Absent one, every UI
+    // surface falls back to a colored car icon whose color is derived
+    // deterministically from the camera's _id (see avatarColor helpers in
+    // apps/web/src/cameraAvatar.ts and the iOS CameraAvatar view) — no
+    // color field needed here since it's pure presentation, computed the
+    // same way on both clients from an id both already have.
+    avatarStorageId: v.optional(v.id("_storage")),
   }).index("by_ssid", ["ssid"]),
 
   // Grants a Clerk user access to a camera's config (many-to-many — a

@@ -82,7 +82,12 @@ async function computePerCamera(ctx: QueryCtx) {
 
   const statusByCameraId = new Map(statuses.map((s) => [s.cameraId, s]));
 
-  function summarize(key: string, name: string, cameraId: Id<"cameras"> | undefined) {
+  async function summarize(
+    key: string,
+    name: string,
+    cameraId: Id<"cameras"> | undefined,
+    avatarStorageId: Id<"_storage"> | undefined,
+  ) {
     const cameraJourneys = journeysByKey.get(key) ?? [];
     const totalDistanceKm = cameraJourneys.reduce((sum, j) => sum + j.distanceKm, 0);
     const totalDrivingSeconds = cameraJourneys.reduce((sum, j) => sum + j.durationSeconds, 0);
@@ -96,6 +101,7 @@ async function computePerCamera(ctx: QueryCtx) {
     return {
       cameraId,
       name,
+      avatarUrl: avatarStorageId ? ((await ctx.storage.getUrl(avatarStorageId)) ?? undefined) : undefined,
       connected: status?.connected ?? false,
       lastSeenAt: status?.lastSeenAt,
       tripCount: cameraJourneys.length,
@@ -109,14 +115,14 @@ async function computePerCamera(ctx: QueryCtx) {
     };
   }
 
-  const rows = cameras.map((c) => summarize(keyFor(c._id), c.name, c._id));
+  const rows = await Promise.all(cameras.map((c) => summarize(keyFor(c._id), c.name, c._id, c.avatarStorageId)));
 
   const unassignedKey = UNASSIGNED_KEY;
   const hasUnassignedData =
     (journeysByKey.get(unassignedKey)?.length ?? 0) > 0 ||
     (recordingCountByKey.get(unassignedKey) ?? 0) > 0;
   if (hasUnassignedData) {
-    rows.push(summarize(unassignedKey, "Unassigned (before multi-camera support)", undefined));
+    rows.push(await summarize(unassignedKey, "Unassigned (before multi-camera support)", undefined, undefined));
   }
 
   return rows;

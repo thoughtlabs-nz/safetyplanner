@@ -2,8 +2,9 @@ import { action, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { requireAdmin, requireIdentity } from "./lib/authz";
 import type { Doc } from "./_generated/dataModel";
+import type { QueryCtx } from "./_generated/server";
 
-function toDeviceConfig(camera: Doc<"cameras">) {
+async function toDeviceConfig(ctx: QueryCtx, camera: Doc<"cameras">) {
   return {
     cameraId: camera._id,
     name: camera.name,
@@ -16,6 +17,11 @@ function toDeviceConfig(camera: Doc<"cameras">) {
     mqttUsername: camera.mqttUsername ?? "",
     mqttPassword: camera.mqttPassword ?? "",
     topicPrefix: camera.topicPrefix ?? "ddpai",
+    // Absent one, iOS/web both fall back to a deterministic-color car icon
+    // computed from cameraId — see cameras.ts's withAvatarUrl comment.
+    avatarUrl: camera.avatarStorageId
+      ? ((await ctx.storage.getUrl(camera.avatarStorageId)) ?? undefined)
+      : undefined,
   };
 }
 
@@ -31,7 +37,9 @@ export const myDevices = query({
       .withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", identity.subject))
       .collect();
     const cameras = await Promise.all(grants.map((g) => ctx.db.get(g.cameraId)));
-    return cameras.filter((c): c is Doc<"cameras"> => c !== null).map(toDeviceConfig);
+    return await Promise.all(
+      cameras.filter((c): c is Doc<"cameras"> => c !== null).map((c) => toDeviceConfig(ctx, c)),
+    );
   },
 });
 
@@ -42,12 +50,14 @@ export const listAllDevices = query({
     await requireAdmin(ctx);
     const cameras = await ctx.db.query("cameras").collect();
     const allGrants = await ctx.db.query("userDeviceAccess").collect();
-    return cameras.map((camera) => ({
-      ...toDeviceConfig(camera),
-      grantedTo: allGrants
-        .filter((g) => g.cameraId === camera._id)
-        .map((g) => ({ grantId: g._id, clerkUserId: g.clerkUserId })),
-    }));
+    return await Promise.all(
+      cameras.map(async (camera) => ({
+        ...(await toDeviceConfig(ctx, camera)),
+        grantedTo: allGrants
+          .filter((g) => g.cameraId === camera._id)
+          .map((g) => ({ grantId: g._id, clerkUserId: g.clerkUserId })),
+      })),
+    );
   },
 });
 

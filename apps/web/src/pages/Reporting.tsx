@@ -4,6 +4,7 @@ import { Heading, Subheading } from '../components/heading'
 import { Text } from '../components/text'
 import { Divider } from '../components/divider'
 import { BarChart, HorizontalBarList } from '../components/barchart'
+import { CameraAvatar } from '../components/cameraAvatar'
 
 function formatDuration(seconds: number): string {
   const mins = Math.round(seconds / 60)
@@ -83,6 +84,7 @@ export default function Reporting() {
               <div key={c.cameraId ?? 'unassigned'} className="rounded-lg border border-zinc-950/10 p-4 dark:border-white/10">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
+                    <CameraAvatar id={c.cameraId ?? 'unassigned'} name={c.name} avatarUrl={c.avatarUrl} size="sm" />
                     <span
                       className={`size-2.5 rounded-full ${c.connected ? 'bg-green-500' : 'bg-red-500'}`}
                     />

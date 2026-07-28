@@ -9,6 +9,7 @@ import { Input } from '../components/input'
 import { Field, FieldGroup, Label } from '../components/fieldset'
 import { Divider } from '../components/divider'
 import { Dialog, DialogTitle, DialogDescription, DialogActions } from '../components/dialog'
+import { CameraAvatar } from '../components/cameraAvatar'
 import { useToast } from '../components/toast'
 import { useAsyncClick } from '../hooks/useAsyncClick'
 
@@ -204,11 +205,44 @@ function CamerasSection() {
   const grantAccess = useMutation(api.devices.grantDeviceAccess)
   const revokeAccess = useMutation(api.devices.revokeDeviceAccess)
   const lookupByEmail = useAction(api.devices.lookupClerkUserByEmail)
+  const generateAvatarUploadUrl = useMutation(api.cameras.generateAvatarUploadUrl)
+  const setAvatar = useMutation(api.cameras.setAvatar)
+  const removeAvatarMutation = useMutation(api.cameras.removeAvatar)
 
   const [addForm, setAddForm] = useState<CameraFormValues>(EMPTY_CAMERA_FORM)
   const [editingId, setEditingId] = useState<Id<'cameras'> | null>(null)
   const [editForm, setEditForm] = useState<CameraFormValues>(EMPTY_CAMERA_FORM)
   const [grantEmail, setGrantEmail] = useState<Record<string, string>>({})
+  const [uploadingAvatarFor, setUploadingAvatarFor] = useState<Id<'cameras'> | null>(null)
+
+  async function handleAvatarFile(cameraId: Id<'cameras'>, file: File) {
+    setUploadingAvatarFor(cameraId)
+    try {
+      const uploadUrl = await generateAvatarUploadUrl({})
+      const res = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type },
+        body: file,
+      })
+      if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`)
+      const { storageId } = (await res.json()) as { storageId: Id<'_storage'> }
+      await setAvatar({ id: cameraId, storageId })
+      toast('Avatar updated')
+    } catch (err) {
+      toast(`Couldn't upload avatar: ${errorMessage(err)}`, 'error')
+    } finally {
+      setUploadingAvatarFor(null)
+    }
+  }
+
+  const [handleRemoveAvatar, removingAvatar] = useAsyncClick(async (cameraId: Id<'cameras'>) => {
+    try {
+      await removeAvatarMutation({ id: cameraId })
+      toast('Avatar removed')
+    } catch (err) {
+      toast(`Couldn't remove avatar: ${errorMessage(err)}`, 'error')
+    }
+  })
 
   // Two mutations because cameras.ts owns identity fields and devices.ts
   // owns connection config (see the CameraFormValues comment) — chaining
@@ -290,7 +324,7 @@ function CamerasSection() {
     }
   })
 
-  const busy = adding || saving || removing || granting || revoking
+  const busy = adding || saving || removing || granting || revoking || removingAvatar
 
   return (
     <SettingsCard
@@ -323,15 +357,49 @@ function CamerasSection() {
                     </>
                   ) : (
                     <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <Text className="font-medium text-zinc-950 dark:text-white">
-                          {device.name} <span className="text-zinc-500 dark:text-zinc-400">({device.ssid})</span>
-                        </Text>
-                        <Text className="text-sm">{device.camUrl}</Text>
-                        <Text className="text-sm">
-                          {device.mqttHost ? `${device.mqttHost}:${device.mqttPort}` : 'No MQTT broker configured'}
-                          {device.mqttHost && !device.mqttUseTLS ? ' (no TLS)' : ''}
-                        </Text>
+                      <div className="flex items-start gap-3">
+                        <div className="flex flex-col items-center gap-1">
+                          <CameraAvatar
+                            id={device.cameraId}
+                            name={device.name}
+                            avatarUrl={device.avatarUrl}
+                            size="lg"
+                          />
+                          <label className="cursor-pointer text-xs text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200">
+                            {uploadingAvatarFor === device.cameraId ? 'Uploading…' : 'Change'}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              disabled={uploadingAvatarFor === device.cameraId}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file) void handleAvatarFile(device.cameraId, file)
+                                e.target.value = ''
+                              }}
+                            />
+                          </label>
+                          {device.avatarUrl && (
+                            <button
+                              type="button"
+                              className="text-xs text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                              disabled={busy}
+                              onClick={() => handleRemoveAvatar(device.cameraId)}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <div>
+                          <Text className="font-medium text-zinc-950 dark:text-white">
+                            {device.name} <span className="text-zinc-500 dark:text-zinc-400">({device.ssid})</span>
+                          </Text>
+                          <Text className="text-sm">{device.camUrl}</Text>
+                          <Text className="text-sm">
+                            {device.mqttHost ? `${device.mqttHost}:${device.mqttPort}` : 'No MQTT broker configured'}
+                            {device.mqttHost && !device.mqttUseTLS ? ' (no TLS)' : ''}
+                          </Text>
+                        </div>
                       </div>
                       <div className="flex shrink-0 gap-2">
                         <Button
