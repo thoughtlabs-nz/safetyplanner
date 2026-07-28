@@ -231,3 +231,48 @@ out center tags;`;
     throw lastError ?? new Error("All Overpass mirrors failed");
   },
 });
+
+// Nearest posted speed limit to a single point — used by the Live Tracking
+// page to show "current speed / limit" next to the vehicle marker.
+// Approximates "nearest way" as "nearest vertex across all maxspeed ways in
+// a small radius", same tradeoff Journeys' assignSpeedLimits makes
+// client-side — fine for a live indicator, not survey-grade.
+export const nearestSpeedLimit = action({
+  args: { lat: v.number(), lng: v.number() },
+  handler: async (ctx, { lat, lng }): Promise<number | undefined> => {
+    const query = `[out:json][timeout:10];
+(
+  way["highway"]["maxspeed"](around:150,${lat},${lng});
+);
+out geom;`;
+
+    const settings = await ctx.runQuery(api.settings.get, {});
+    const endpoints = settings.overpassUrl
+      ? [settings.overpassUrl, ...OVERPASS_ENDPOINTS]
+      : OVERPASS_ENDPOINTS;
+
+    let lastError: Error | undefined;
+    for (const endpoint of endpoints) {
+      try {
+        const apiKey = endpoint === settings.overpassUrl ? settings.overpassApiKey : undefined;
+        const data = await fetchOverpass(endpoint, query, apiKey || undefined);
+
+        let best: { distance: number; maxspeedKmh: number } | undefined;
+        for (const element of data.elements) {
+          if (element.type !== "way" || !element.tags?.maxspeed) continue;
+          const maxspeedKmh = parseMaxspeed(element.tags.maxspeed);
+          if (maxspeedKmh === undefined) continue;
+          for (const point of element.geometry ?? []) {
+            if (point.lat === undefined || point.lon === undefined) continue;
+            const distance = haversineMeters(lat, lng, point.lat, point.lon);
+            if (!best || distance < best.distance) best = { distance, maxspeedKmh };
+          }
+        }
+        return best?.maxspeedKmh;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+      }
+    }
+    throw lastError ?? new Error("All Overpass mirrors failed");
+  },
+});

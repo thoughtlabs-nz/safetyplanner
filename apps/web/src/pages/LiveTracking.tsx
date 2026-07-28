@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet'
 import { divIcon } from 'leaflet'
-import { useQuery } from 'convex/react'
+import { useAction, useQuery } from 'convex/react'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
 import { Heading } from '../components/heading'
 import { Text } from '../components/text'
-import { Select } from '../components/select'
+import { Listbox, ListboxOption, ListboxLabel } from '../components/listbox'
+import { CameraAvatar } from '../components/cameraAvatar'
+import { avatarColorFor } from '../cameraAvatar'
 import { Badge } from '../components/badge'
 import 'leaflet/dist/leaflet.css'
 
@@ -18,19 +20,70 @@ const DEFAULT_CENTER: [number, number] = [-36.8485, 174.7633] // Auckland, NZ
 const LIVE_THRESHOLD_MS = 15_000
 const STALE_THRESHOLD_MS = 5 * 60_000
 
-function vehicleIcon(headingDeg: number | undefined) {
+// How often (and how far the vehicle must move) before re-querying Overpass
+// for the current road's speed limit — a live 1Hz position feed would
+// otherwise hammer the API on every single fix.
+const SPEED_LIMIT_REFRESH_MS = 15_000
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000
+  const dLat = ((lat2 - lat1) * Math.PI) / 180
+  const dLng = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLng / 2) ** 2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+// The vehicle marker: the camera's avatar (photo, or the same colored car
+// icon used everywhere else a camera is shown) plus a speed badge floating
+// above it — colored green/amber/red against the Overpass-resolved speed
+// limit the same way Journeys' speed segments are, when a limit is known.
+function vehicleIcon(
+  headingDeg: number | undefined,
+  avatarUrl: string | undefined | null,
+  avatarId: string,
+  speedKmh: number | undefined,
+  speedLimitKmh: number | undefined,
+  tolerancePercent: number,
+) {
   const rotation = headingDeg ?? 0
+  // A real photo shouldn't spin to track heading — only the default car
+  // icon rotates, matching how a car icon reads directionally but a face/
+  // logo photo wouldn't.
+  const circleStyle = avatarUrl
+    ? 'background:#18181b;'
+    : `background:${avatarColorFor(avatarId)};transform:rotate(${rotation}deg);`
+  const inner = avatarUrl
+    ? `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 16v-3.2a1 1 0 0 1 .1-.44l1.55-3.32A2 2 0 0 1 7.46 8h9.08a2 2 0 0 1 1.81 1.14l1.55 3.42a1 1 0 0 1 .1.44V16a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-.5H7v.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1Z" stroke="white" stroke-width="1.6" stroke-linejoin="round"/>
+        <circle cx="7.5" cy="16" r="1.4" fill="white"/><circle cx="16.5" cy="16" r="1.4" fill="white"/>
+        <path d="M4.5 12.5h15" stroke="white" stroke-width="1.6"/>
+      </svg>`
+
+  let speedColor = '#3b82f6'
+  if (speedKmh !== undefined && speedLimitKmh !== undefined) {
+    const toleranceKmh = speedLimitKmh * (tolerancePercent / 100)
+    speedColor = speedKmh > speedLimitKmh + toleranceKmh ? '#ef4444' : speedKmh > speedLimitKmh ? '#f59e0b' : '#22c55e'
+  }
+  const speedLabel =
+    speedKmh !== undefined
+      ? `${Math.round(speedKmh)}${speedLimitKmh !== undefined ? ` / ${Math.round(speedLimitKmh)}` : ''} km/h`
+      : '—'
+
   return divIcon({
     html:
-      `<div style="width:34px;height:34px;border-radius:50%;background:#8b5cf6;` +
-      `display:flex;align-items:center;justify-content:center;` +
-      `box-shadow:0 1px 4px rgba(0,0,0,0.5);transform:rotate(${rotation}deg)">` +
-      `<svg width="18" height="18" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg">` +
-      `<path d="M12 2 L19 21 L12 17 L5 21 Z"/>` +
-      `</svg></div>`,
+      `<div style="position:relative;width:34px;height:46px;">` +
+      `<div style="position:absolute;top:0;left:50%;transform:translateX(-50%);background:${speedColor};color:white;` +
+      `font-size:10px;font-weight:600;padding:1px 6px;border-radius:9999px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">` +
+      `${speedLabel}</div>` +
+      `<div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%);width:34px;height:34px;border-radius:50%;` +
+      `display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,0.5);overflow:hidden;${circleStyle}">` +
+      `${inner}</div></div>`,
     className: '',
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [34, 46],
+    iconAnchor: [17, 34],
   })
 }
 
@@ -71,8 +124,11 @@ function StatTile({ label, value, sub }: { label: string; value: string; sub?: s
 export default function LiveTracking() {
   const telemetry = useQuery(api.liveTelemetry.listAll)
   const cameras = useQuery(api.cameras.list)
+  const settings = useQuery(api.settings.get, {})
+  const fetchSpeedLimit = useAction(api.overpass.nearestSpeedLimit)
   const [selectedCameraId, setSelectedCameraId] = useState<Id<'cameras'> | null>(null)
   const [follow, setFollow] = useState(true)
+  const [speedLimitKmh, setSpeedLimitKmh] = useState<number | undefined>(undefined)
   // 1s tick so the "last update" age and LIVE/STALE badge move without
   // needing new data to arrive.
   const [now, setNow] = useState(() => Date.now())
@@ -89,6 +145,7 @@ export default function LiveTracking() {
   }, [selectedCameraId, telemetry])
 
   const row = telemetry?.find((t) => t.cameraId === activeCameraId) ?? null
+  const camera = cameras?.find((c) => c._id === activeCameraId)
   const cameraName = (id: Id<'cameras'>) => cameras?.find((c) => c._id === id)?.name ?? 'Unknown camera'
 
   const age = row ? now - row.updatedAt : null
@@ -100,7 +157,51 @@ export default function LiveTracking() {
     () => (row ? row.trail.map((p) => [p.lat, p.lng] as [number, number]) : []),
     [row],
   )
-  const icon = useMemo(() => vehicleIcon(row?.headingDeg), [row?.headingDeg])
+
+  // Refetches on a timer (not on every 1Hz position update) and only when
+  // the vehicle has actually moved far enough to plausibly be on a
+  // different road — keeps Overpass calls to a handful per minute instead
+  // of one per fix.
+  const lastLookupRef = useRef<{ lat: number; lng: number } | null>(null)
+  useEffect(() => {
+    if (!position) {
+      setSpeedLimitKmh(undefined)
+      lastLookupRef.current = null
+      return
+    }
+    const [lat, lng] = position
+    const lookup = () => {
+      fetchSpeedLimit({ lat, lng })
+        .then((limit) => {
+          setSpeedLimitKmh(limit ?? undefined)
+          lastLookupRef.current = { lat, lng }
+        })
+        .catch(() => undefined)
+    }
+    const last = lastLookupRef.current
+    if (!last || haversineMeters(last.lat, last.lng, lat, lng) > 50) {
+      lookup()
+    }
+    const interval = setInterval(lookup, SPEED_LIMIT_REFRESH_MS)
+    return () => clearInterval(interval)
+    // Re-running this effect per fix (every ~1s) would defeat the throttle
+    // above — only restart the interval when switching camera/losing the
+    // position entirely.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCameraId, position === null])
+
+  const icon = useMemo(
+    () =>
+      vehicleIcon(
+        row?.headingDeg,
+        camera?.avatarUrl,
+        activeCameraId ?? 'unassigned',
+        row?.speedKmh,
+        speedLimitKmh,
+        settings?.speedTolerancePercent ?? 10,
+      ),
+    [row?.headingDeg, row?.speedKmh, camera?.avatarUrl, activeCameraId, speedLimitKmh, settings?.speedTolerancePercent],
+  )
 
   return (
     <div>
@@ -113,16 +214,25 @@ export default function LiveTracking() {
         </div>
         <div className="flex items-center gap-3">
           {telemetry && telemetry.length > 1 && (
-            <Select
+            <Listbox
               value={activeCameraId ?? ''}
-              onChange={(e) => setSelectedCameraId(e.target.value as Id<'cameras'>)}
+              onChange={(id) => setSelectedCameraId(id as Id<'cameras'>)}
+              className="max-w-56"
+              aria-label="Select camera"
             >
               {telemetry.map((t) => (
-                <option key={t.cameraId} value={t.cameraId}>
-                  {cameraName(t.cameraId)}
-                </option>
+                <ListboxOption key={t.cameraId} value={t.cameraId}>
+                  <CameraAvatar
+                    id={t.cameraId}
+                    name={cameraName(t.cameraId)}
+                    avatarUrl={cameras?.find((c) => c._id === t.cameraId)?.avatarUrl}
+                    size="sm"
+                    data-slot="avatar"
+                  />
+                  <ListboxLabel>{cameraName(t.cameraId)}</ListboxLabel>
+                </ListboxOption>
               ))}
-            </Select>
+            </Listbox>
           )}
           <label className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input
@@ -144,10 +254,15 @@ export default function LiveTracking() {
       )}
 
       {row && (
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <StatTile
             label="Speed"
             value={row.speedKmh !== undefined ? `${Math.round(row.speedKmh)} km/h` : '—'}
+          />
+          <StatTile
+            label="Speed limit"
+            value={speedLimitKmh !== undefined ? `${Math.round(speedLimitKmh)} km/h` : '—'}
+            sub="via OpenStreetMap"
           />
           <StatTile
             label="Heading"
