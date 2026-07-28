@@ -193,6 +193,11 @@ export default defineSchema({
     ...obdSampleFields,
   })
     .index("by_camera_batch", ["cameraId", "batchId"])
+    // Journey joins go through this one, not by_timestamp: a trip belongs to
+    // one vehicle, and on a multi-camera account a bare time-range scan
+    // would pull in whatever else was driving at the same moment.
+    .index("by_camera_timestamp", ["cameraId", "timestamp"])
+    // Retention only cares about age, across every camera at once.
     .index("by_timestamp", ["timestamp"]),
 
   // Derived trips built from gpsFixes and persisted so the Journeys list

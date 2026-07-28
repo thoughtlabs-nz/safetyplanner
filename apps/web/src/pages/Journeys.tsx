@@ -11,6 +11,7 @@ import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from '.
 import { Listbox, ListboxOption, ListboxLabel } from '../components/listbox'
 import { Badge } from '../components/badge'
 import { Timeline, type TimelineMarker } from '../components/timeline'
+import { TimeSeriesChart } from '../components/linechart'
 import { Dialog, DialogTitle, DialogDescription, DialogBody, DialogActions } from '../components/dialog'
 import { CameraAvatar } from '../components/cameraAvatar'
 import { useToast } from '../components/toast'
@@ -450,6 +451,103 @@ function LayerToggleButton({
   )
 }
 
+/// Battery state of charge across a trip, from the recorded OBD samples.
+///
+/// State of charge alone gets the plot. Pack voltage and current are in the
+/// same rows and were tempting to overlay, but two measures on one plot means
+/// two y-scales — so they'd need a second chart rather than a second axis.
+/// Charge is also the one a driver actually reads a trip against.
+function JourneyBattery({
+  samples,
+}: {
+  samples: {
+    timestamp: number
+    stateOfChargePct?: number
+    batteryCapacityAh?: number
+    batteryVoltage?: number
+  }[]
+}) {
+  const series = useMemo(
+    () =>
+      samples
+        .filter((s): s is typeof s & { stateOfChargePct: number } => s.stateOfChargePct !== undefined)
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .map((s) => ({ timestamp: s.timestamp, value: s.stateOfChargePct })),
+    [samples],
+  )
+
+  if (series.length < 2) {
+    return (
+      <Text>
+        No battery readings recorded for this trip. Readings come from the OBD dongle via the
+        phone — the car has to be switched on and the Live tab tracking for them to be captured.
+      </Text>
+    )
+  }
+
+  const start = series[0].value
+  const end = series[series.length - 1].value
+  const used = start - end
+
+  // Capacity and pack voltage are polled far less often than charge, so take
+  // whichever readings the trip did capture rather than assuming the last
+  // sample carries them.
+  const capacityAh = samples.find((s) => s.batteryCapacityAh !== undefined)?.batteryCapacityAh
+  const voltage = samples.find((s) => s.batteryVoltage !== undefined)?.batteryVoltage
+  // Nominal-voltage estimate, not a measurement: real consumption would need
+  // integrating pack current over time. Labelled as approximate for exactly
+  // that reason — it's the right order of magnitude, not a billing figure.
+  const kwhUsed =
+    capacityAh !== undefined && voltage !== undefined
+      ? (used / 100) * capacityAh * voltage / 1000
+      : undefined
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap gap-x-8 gap-y-2">
+        <div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">Start</div>
+          <div className="text-lg font-semibold tabular-nums text-zinc-950 dark:text-white">
+            {start.toFixed(1)}%
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">End</div>
+          <div className="text-lg font-semibold tabular-nums text-zinc-950 dark:text-white">
+            {end.toFixed(1)}%
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+            {used >= 0 ? 'Used' : 'Regained'}
+          </div>
+          <div className="text-lg font-semibold tabular-nums text-zinc-950 dark:text-white">
+            {Math.abs(used).toFixed(1)} pts
+          </div>
+        </div>
+        {kwhUsed !== undefined && (
+          <div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">Energy (approx.)</div>
+            <div className="text-lg font-semibold tabular-nums text-zinc-950 dark:text-white">
+              {Math.abs(kwhUsed).toFixed(1)} kWh
+            </div>
+          </div>
+        )}
+      </div>
+
+      <TimeSeriesChart
+        data={series}
+        valueFormat={(v) => `${v.toFixed(0)}%`}
+        ariaLabel="Battery state of charge over the course of this trip"
+      />
+
+      <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+        {series.length} readings · state of charge
+      </div>
+    </div>
+  )
+}
+
 function JourneyTimeline({
   startTime,
   endTime,
@@ -629,6 +727,28 @@ export default function Journeys() {
       ? { startTime: selectedTrip.startTime, endTime: selectedTrip.endTime }
       : 'skip',
   )
+
+  // Recorded vehicle readings for this trip, if the phone had an OBD dongle
+  // connected while it was driven. Scoped by camera, so this needs a trip
+  // that has one — journeys built before multi-camera support don't, and
+  // there's no honest way to guess which vehicle they belong to.
+  //
+  // The join is purely on time. Journey bounds come from the camera's GPS
+  // clock and OBD timestamps from the phone's, but both track true UTC (GPS
+  // directly, the phone via NTP), so they line up without correction. This
+  // is also why a trip only grows a battery chart once the camera footage
+  // behind it has been synced — the journey has to exist first.
+  const tripObdSamples = useQuery(
+    api.obdSamples.forTimeRange,
+    selectedTrip?.cameraId
+      ? {
+          cameraId: selectedTrip.cameraId,
+          startTime: selectedTrip.startTime,
+          endTime: selectedTrip.endTime,
+        }
+      : 'skip',
+  )
+
 
   const sortedFixes = useMemo(
     () => (fixes ?? []).slice().sort((a, b) => a.timestamp - b.timestamp),
@@ -941,6 +1061,21 @@ export default function Journeys() {
               />
             )}
           </div>
+
+          {/* Only for trips that could have OBD data at all — a trip with no
+              cameraId can't be scoped to a vehicle, so the query is skipped
+              and there is nothing to say. */}
+          {selectedTrip.cameraId && (
+            <div className="mt-4 rounded-lg border border-zinc-950/10 dark:border-white/10 p-4">
+              <Subheading>Battery</Subheading>
+              <Divider className="my-3" />
+              {tripObdSamples === undefined ? (
+                <Text>Loading battery readings…</Text>
+              ) : (
+                <JourneyBattery samples={tripObdSamples} />
+              )}
+            </div>
+          )}
 
           {activeLayer === 'speed' && (
             <>

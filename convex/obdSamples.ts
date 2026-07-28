@@ -8,6 +8,29 @@ import { obdSampleValidator } from "./lib/obdTelemetry";
 // so these queries don't need the same paginate-everything discipline, but
 // they follow it anyway for the range query, which spans a whole trip.
 
+// One trip's worth of readings, for the battery-over-time chart on the
+// Journeys page. Scoped to the camera because a journey belongs to one
+// vehicle (see the by_camera_timestamp index).
+//
+// A single .collect() is safe at this volume where it wouldn't be for
+// accelSamples: OBD is recorded once every few seconds, so an hour of
+// driving is ~720 rows against Convex's 4096-document read limit. The take()
+// cap is what keeps that true for an implausibly long trip rather than
+// failing the whole query — LIMIT is ~7 hours of continuous driving.
+const TRIP_SAMPLE_LIMIT = 4000;
+
+export const forTimeRange = query({
+  args: { cameraId: v.id("cameras"), startTime: v.number(), endTime: v.number() },
+  handler: async (ctx, { cameraId, startTime, endTime }) => {
+    return await ctx.db
+      .query("obdSamples")
+      .withIndex("by_camera_timestamp", (q) =>
+        q.eq("cameraId", cameraId).gte("timestamp", startTime).lte("timestamp", endTime),
+      )
+      .take(TRIP_SAMPLE_LIMIT);
+  },
+});
+
 export const pageForTimeRange = query({
   args: { startTime: v.number(), endTime: v.number(), paginationOpts: paginationOptsValidator },
   handler: async (ctx, { startTime, endTime, paginationOpts }) => {
