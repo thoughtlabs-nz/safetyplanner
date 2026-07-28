@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { obdTelemetryValidator } from "./lib/obdTelemetry";
+import { obdSampleFields, obdTelemetryValidator } from "./lib/obdTelemetry";
 
 export default defineSchema({
   // Registered dashcams. Each runs its own local Wi-Fi network at the same
@@ -166,6 +166,33 @@ export default defineSchema({
     downsampled: v.optional(v.boolean()),
   })
     .index("by_gpsFileId", ["gpsFileId"])
+    .index("by_timestamp", ["timestamp"]),
+
+  // Recorded vehicle readings from the phone's BLE OBD-II dongle — the
+  // store-and-forward counterpart to the live `obd` field on liveTelemetry
+  // above. Same readings, but a history rather than a latest-value row.
+  //
+  // Arrives on the `gpsdata` MQTT topic alongside fixes/accelSamples rather
+  // than on a topic of its own (see apps/mqtt-ingest/src/index.ts's
+  // GpsDataMessage), so unlike accelSamples there is NOT always a gpsFile to
+  // hang off: an OBD recording session is driven by live tracking, not by a
+  // camera GPS file sync, and inventing a gpsFiles row for one would put a
+  // phantom entry in the Recordings page's GPS file list. Hence cameraId is
+  // the required owner here and gpsFileId is optional, set only when a batch
+  // did happen to ride along with a real GPS file.
+  obdSamples: defineTable({
+    cameraId: v.id("cameras"),
+    gpsFileId: v.optional(v.id("gpsFiles")),
+    recordingId: v.optional(v.id("recordings")),
+    // Identifies the phone-side chunk this sample arrived in. MQTT is
+    // at-least-once and the Outbox re-publishes anything unacked, so a
+    // redelivered chunk must not double-insert its samples — this is what
+    // the (cameraId, batchId) index is checked against before inserting,
+    // playing the same dedupe role gpsFiles.filename plays for fixes.
+    batchId: v.string(),
+    ...obdSampleFields,
+  })
+    .index("by_camera_batch", ["cameraId", "batchId"])
     .index("by_timestamp", ["timestamp"]),
 
   // Derived trips built from gpsFixes and persisted so the Journeys list

@@ -22,6 +22,7 @@ export const runIfDue = action({
 
     await ctx.runAction(api.gpsRetention.runRetention, {});
     await ctx.runAction(api.accelRetention.runRetention, {});
+    await ctx.runAction(api.obdRetention.runRetention, {});
     await ctx.runMutation(api.settings.markRetentionRan, {});
 
     return { ran: true };
@@ -36,11 +37,14 @@ export const runNow = action({
   ): Promise<{
     gps: { deletedExpired: number; downsampledBuckets: number; deletedRaw: number };
     accel: { deletedExpired: number; downsampledBuckets: number; deletedRaw: number };
+    // Expiry only — obdSamples are never downsampled, see obdRetention.ts.
+    obd: { deletedExpired: number };
   }> => {
     const gps = await ctx.runAction(api.gpsRetention.runRetention, {});
     const accel = await ctx.runAction(api.accelRetention.runRetention, {});
+    const obd = await ctx.runAction(api.obdRetention.runRetention, {});
     await ctx.runMutation(api.settings.markRetentionRan, {});
-    return { gps, accel };
+    return { gps, accel, obd };
   },
 });
 

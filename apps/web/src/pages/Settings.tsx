@@ -537,6 +537,7 @@ function formatCount(count: number, approximate: boolean): string {
 const TABLE_LABELS: Record<string, string> = {
   gpsFixes: 'GPS fixes',
   accelSamples: 'Accelerometer samples',
+  obdSamples: 'Vehicle OBD samples',
   recordings: 'Recordings',
   gpsFiles: 'GPS files',
   journeys: 'Journeys',

@@ -15,7 +15,7 @@ import { v } from "convex/values";
 // Every field is optional: each comes from its own PID on its own polling
 // interval, so a sample carries the latest value of each rather than a
 // simultaneous set, and an unsupported PID is simply always absent.
-export const obdTelemetryFields = {
+export const obdReadingFields = {
   // The car's own speedometer, as opposed to the GPS speed alongside it.
   speedKmh: v.optional(v.number()),
   rpm: v.optional(v.number()),
@@ -39,8 +39,24 @@ export const obdTelemetryFields = {
   batteryCapacityAh: v.optional(v.number()),
   batteryVoltage: v.optional(v.number()),
   batteryCurrentA: v.optional(v.number()),
-  // Phone-side time of the newest reading in this group, unix ms.
-  updatedAt: v.optional(v.number()),
 };
 
-export const obdTelemetryValidator = v.object(obdTelemetryFields);
+// The live-telemetry flavour: the readings plus when the newest of them was
+// taken. Only meaningful on the single latest-value row, where "how stale is
+// this" is a question worth answering.
+export const obdTelemetryValidator = v.object({
+  ...obdReadingFields,
+  // Phone-side time of the newest reading in this group, unix ms.
+  updatedAt: v.optional(v.number()),
+});
+
+// The recorded flavour: the same readings stamped with the time they were
+// taken, for the obdSamples history table. `updatedAt` would be redundant
+// here — `timestamp` IS the reading time for a recorded sample, whereas on
+// the live row it distinguishes "the phone reported" from "the car answered".
+export const obdSampleFields = {
+  ...obdReadingFields,
+  timestamp: v.number(),
+};
+
+export const obdSampleValidator = v.object(obdSampleFields);

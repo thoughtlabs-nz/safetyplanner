@@ -7,6 +7,7 @@ import { createLogger } from "./logger.js";
 import { saveFile, deleteFile } from "./storage.js";
 import { parseGpsFile, type GpsFix, type AccelSample } from "./nmeaTarParser.js";
 import { insertAccelSamplesChunked } from "./accelBatching.js";
+import { insertObdSamplesChunked } from "./obdBatching.js";
 import { parseCameraTime } from "./time.js";
 
 const convex = new ConvexHttpClient(config.convexUrl);
@@ -62,10 +63,54 @@ interface GpsFileMessage {
 // multi-segment file already does) — there's no ordering/append dependency
 // between chunks.
 interface GpsDataMessage {
-  filename: string;
+  // Absent on an OBD-only batch. A `gpsdata` message is really "a batch of
+  // recorded samples", and OBD batches are produced by a live-tracking
+  // session rather than by a camera GPS file sync — there is no camera file
+  // for them to name. That distinction matters beyond tidiness: a filename
+  // is what creates a gpsFiles row, and gpsFiles are listed in the web
+  // Recordings page, so minting one per OBD chunk would fill that list with
+  // phantom GPS files that hold no GPS data.
+  filename?: string;
   parentfile?: string;
   fixes: GpsFix[];
   accelSamples: AccelSample[];
+  // Recorded vehicle readings, present when the phone had an OBD dongle
+  // connected during the drive. Carried on this topic rather than one of
+  // their own so there is a single store-and-forward path to reason about;
+  // handleGpsData below routes on shape.
+  obdSamples?: ObdSample[];
+  // Required whenever obdSamples is non-empty. Identifies the phone-side
+  // chunk for dedupe — the counterpart to `filename` for GPS batches, since
+  // MQTT is at-least-once and the Outbox republishes anything unacked.
+  obdBatchId?: string;
+}
+
+// One recorded reading of the car. Same fields as the live ObdTelemetry
+// above minus `updatedAt` (here `timestamp` IS the reading time) — mirrors
+// convex/lib/obdTelemetry.ts's obdSampleFields and Models.swift's
+// ObdRecordedSample.
+interface ObdSample {
+  timestamp: number;
+  speedKmh?: number;
+  rpm?: number;
+  motorPowerW?: number;
+  gearPosition?: string;
+  powerSwitchOn?: boolean;
+  bat12vVoltage?: number;
+  ambientTempC?: number;
+  ecoMode?: boolean;
+  ePedalMode?: boolean;
+  odometerKm?: number;
+  rangeRemainingKm?: number;
+  tyrePressureFrontLeftKpa?: number;
+  tyrePressureFrontRightKpa?: number;
+  tyrePressureRearLeftKpa?: number;
+  tyrePressureRearRightKpa?: number;
+  stateOfChargePct?: number;
+  batteryHealthPct?: number;
+  batteryCapacityAh?: number;
+  batteryVoltage?: number;
+  batteryCurrentA?: number;
 }
 
 interface StatusMessage {
@@ -296,6 +341,75 @@ async function handleLive(cameraId: Id<"cameras">, msg: LiveTelemetryMessage): P
 }
 
 async function handleGpsData(cameraId: Id<"cameras">, msg: GpsDataMessage): Promise<void> {
+  // A `gpsdata` message is a batch of recorded samples, and the three kinds
+  // it can carry don't always travel together: GPS fixes and accel samples
+  // come from parsing a camera GPS file, OBD samples come from a live
+  // tracking session with a dongle connected. So route on what's actually
+  // present rather than assuming a single shape.
+  //
+  // Order matters: the GPS half runs first when both are present, so the
+  // OBD samples can be attached to the gpsFile/recording it resolved.
+  let gpsFileId: Id<"gpsFiles"> | undefined;
+  let recordingId: Id<"recordings"> | undefined;
+
+  // Truthy rather than `!== undefined`: the phone omits the key entirely on
+  // an OBD-only batch (verified), but a null or "" arriving from anywhere
+  // else would otherwise be treated as a real filename and blow up on
+  // filename.split() — and an unnamed GPS batch is meaningless anyway.
+  if (msg.filename) {
+    const result = await ingestGpsBatch(cameraId, msg, msg.filename);
+    // A skipped GPS half does NOT skip the message: on a redelivery where
+    // the GPS half landed but the OBD insert didn't, returning here would
+    // mean the OBD samples never got a second chance. The OBD half has its
+    // own batchId dedupe, so letting it run again is safe either way.
+    if (result !== "skipped") {
+      gpsFileId = result.gpsFileId;
+      recordingId = result.recordingId;
+    }
+  }
+
+  if (msg.obdSamples && msg.obdSamples.length > 0) {
+    await ingestObdBatch(cameraId, msg, gpsFileId, recordingId);
+  }
+}
+
+/// Recorded vehicle readings. Deduped on obdBatchId rather than on a
+/// filename — an OBD batch has no camera file behind it (see
+/// GpsDataMessage.filename), so there's no gpsFiles row to check against and
+/// none is created.
+async function ingestObdBatch(
+  cameraId: Id<"cameras">,
+  msg: GpsDataMessage,
+  gpsFileId: Id<"gpsFiles"> | undefined,
+  recordingId: Id<"recordings"> | undefined,
+): Promise<void> {
+  const samples = msg.obdSamples ?? [];
+  const batchId = msg.obdBatchId;
+  if (!batchId) {
+    // Without an id there's no way to tell a redelivery from new data, and
+    // MQTT redelivery is routine — dropping is the safe direction, since
+    // silently double-inserting a drive's readings is unrecoverable without
+    // knowing which rows were duplicates.
+    await log.warn("mqtt obd batch missing obdBatchId, dropped", { samples: samples.length });
+    return;
+  }
+
+  if (await convex.query(api.obdSamples.hasBatch, { cameraId, batchId })) {
+    return;
+  }
+
+  await insertObdSamplesChunked(convex, cameraId, gpsFileId, recordingId, batchId, samples);
+  await log.info(`mqtt obd samples ingested: ${batchId}`, { samples: samples.length });
+}
+
+/// The original GPS path, unchanged in behaviour — extracted so
+/// handleGpsData can run it conditionally. Returns "skipped" when this batch
+/// was already ingested or has been tombstoned by a delete.
+async function ingestGpsBatch(
+  cameraId: Id<"cameras">,
+  msg: GpsDataMessage,
+  filename: string,
+): Promise<"skipped" | { gpsFileId: Id<"gpsFiles">; recordingId: Id<"recordings"> | undefined }> {
   // A piece's message filename depends on its parse results: accel-carrying
   // pieces get chunk-suffixed names ("X__chunk0", "X__chunk1", …) while
   // fix-only pieces are named bare ("X"). A parser change on the phone can
@@ -303,20 +417,20 @@ async function handleGpsData(cameraId: Id<"cameras">, msg: GpsDataMessage): Prom
   // is exactly how duplicate fixes got imported (bare-named rows from
   // before the accel parser worked, chunk0-named rows after). Dedupe must
   // treat "X" and "X__chunk0" as the same identity, in both directions.
-  const baseName = msg.filename.split("__chunk")[0];
-  const aliasName = msg.filename === baseName ? `${baseName}__chunk0` : baseName;
-  const existing = await convex.query(api.gpsFiles.getByFilename, { cameraId, filename: msg.filename });
-  if (existing) return;
+  const baseName = filename.split("__chunk")[0];
+  const aliasName = filename === baseName ? `${baseName}__chunk0` : baseName;
+  const existing = await convex.query(api.gpsFiles.getByFilename, { cameraId, filename });
+  if (existing) return "skipped";
   const existingAlias = await convex.query(api.gpsFiles.getByFilename, { cameraId, filename: aliasName });
   if (existingAlias) {
     await log.info(`mqtt gps data skipped, already ingested under alias name`, {
-      filename: msg.filename,
+      filename,
       alias: aliasName,
     });
-    return;
+    return "skipped";
   }
-  if (await convex.query(api.deletedFiles.isDeleted, { cameraId, filename: msg.filename })) return;
-  if (await convex.query(api.deletedFiles.isDeleted, { cameraId, filename: baseName })) return;
+  if (await convex.query(api.deletedFiles.isDeleted, { cameraId, filename })) return "skipped";
+  if (await convex.query(api.deletedFiles.isDeleted, { cameraId, filename: baseName })) return "skipped";
 
   const recording = msg.parentfile
     ? await convex.query(api.recordings.getByFilename, { cameraId, filename: msg.parentfile })
@@ -327,7 +441,7 @@ async function handleGpsData(cameraId: Id<"cameras">, msg: GpsDataMessage): Prom
   const gpsFileId = await convex.mutation(api.gpsFiles.upsert, {
     cameraId,
     recordingId: recording?._id,
-    filename: msg.filename,
+    filename,
   });
 
   if (msg.fixes.length > 0) {
@@ -343,10 +457,12 @@ async function handleGpsData(cameraId: Id<"cameras">, msg: GpsDataMessage): Prom
     await insertAccelSamplesChunked(convex, gpsFileId, recording?._id, msg.accelSamples);
   }
 
-  await log.info(`mqtt gps data ingested: ${msg.filename}`, {
+  await log.info(`mqtt gps data ingested: ${filename}`, {
     fixes: msg.fixes.length,
     accelSamples: msg.accelSamples.length,
   });
+
+  return { gpsFileId, recordingId: recording?._id };
 }
 
 // Convex mutations aren't safe to fire concurrently against the same

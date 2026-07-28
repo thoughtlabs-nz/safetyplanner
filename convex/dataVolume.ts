@@ -13,7 +13,7 @@ const PAGE_SIZE = 1000;
 
 export const countPage = query({
   args: {
-    table: v.union(v.literal("gpsFixes"), v.literal("accelSamples")),
+    table: v.union(v.literal("gpsFixes"), v.literal("accelSamples"), v.literal("obdSamples")),
     cursor: v.union(v.string(), v.null()),
   },
   handler: async (
@@ -27,7 +27,7 @@ export const countPage = query({
 
 async function boundedCount(
   ctx: ActionCtx,
-  table: "gpsFixes" | "accelSamples",
+  table: "gpsFixes" | "accelSamples" | "obdSamples",
 ): Promise<{ count: number; approximate: boolean }> {
   let total = 0;
   let cursor: string | null = null;
@@ -49,9 +49,10 @@ async function boundedCount(
 export const estimate = action({
   args: {},
   handler: async (ctx): Promise<Record<string, { count: number; approximate: boolean }>> => {
-    const [gpsFixes, accelSamples, recordings, gpsFiles, journeys, events] = await Promise.all([
+    const [gpsFixes, accelSamples, obdSamples, recordings, gpsFiles, journeys, events] = await Promise.all([
       boundedCount(ctx, "gpsFixes"),
       boundedCount(ctx, "accelSamples"),
+      boundedCount(ctx, "obdSamples"),
       ctx.runQuery(api.recordings.list, { limit: COUNT_CAP }).then((r) => ({
         count: r.length,
         approximate: r.length >= COUNT_CAP,
@@ -70,6 +71,6 @@ export const estimate = action({
       })),
     ]);
 
-    return { gpsFixes, accelSamples, recordings, gpsFiles, journeys, events };
+    return { gpsFixes, accelSamples, obdSamples, recordings, gpsFiles, journeys, events };
   },
 });
