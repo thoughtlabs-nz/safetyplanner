@@ -1,7 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useAction, useConvexAuth, useMutation, useQuery } from 'convex/react'
+import type { FunctionReturnType } from 'convex/server'
 import { api } from '../../../../convex/_generated/api'
 import type { Id } from '../../../../convex/_generated/dataModel'
+
+type ClerkUserProfile = FunctionReturnType<typeof api.devices.userProfiles>[number]
 import { Heading, Subheading } from '../components/heading'
 import { Text } from '../components/text'
 import { Button } from '../components/button'
@@ -205,6 +208,7 @@ function CamerasSection() {
   const grantAccess = useMutation(api.devices.grantDeviceAccess)
   const revokeAccess = useMutation(api.devices.revokeDeviceAccess)
   const lookupByEmail = useAction(api.devices.lookupClerkUserByEmail)
+  const fetchUserProfiles = useAction(api.devices.userProfiles)
   const generateAvatarUploadUrl = useMutation(api.cameras.generateAvatarUploadUrl)
   const setAvatar = useMutation(api.cameras.setAvatar)
   const removeAvatarMutation = useMutation(api.cameras.removeAvatar)
@@ -214,6 +218,33 @@ function CamerasSection() {
   const [editForm, setEditForm] = useState<CameraFormValues>(EMPTY_CAMERA_FORM)
   const [grantEmail, setGrantEmail] = useState<Record<string, string>>({})
   const [uploadingAvatarFor, setUploadingAvatarFor] = useState<Id<'cameras'> | null>(null)
+  const [userProfiles, setUserProfiles] = useState<Record<string, ClerkUserProfile>>({})
+
+  // userDeviceAccess only stores clerkUserId — nothing display-friendly
+  // about a grant lives in Convex, so the Access list's names/avatars come
+  // from a batch Clerk Backend API lookup, refetched whenever the set of
+  // granted user ids changes (not on every devices poll).
+  const grantedClerkUserIds = useMemo(() => {
+    if (!devices) return []
+    const ids = new Set<string>()
+    for (const device of devices) {
+      for (const grant of device.grantedTo) ids.add(grant.clerkUserId)
+    }
+    return Array.from(ids)
+  }, [devices])
+
+  useEffect(() => {
+    if (grantedClerkUserIds.length === 0) return
+    fetchUserProfiles({ clerkUserIds: grantedClerkUserIds })
+      .then((profiles) => {
+        setUserProfiles(Object.fromEntries(profiles.map((p) => [p.clerkUserId, p])))
+      })
+      .catch(() => undefined)
+    // grantedClerkUserIds is a freshly-derived array every render; join()
+    // gives useEffect a stable primitive to compare instead of refetching
+    // on every render even when the underlying ids haven't changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grantedClerkUserIds.join(',')])
 
   async function handleAvatarFile(cameraId: Id<'cameras'>, file: File) {
     setUploadingAvatarFor(cameraId)
@@ -435,15 +466,37 @@ function CamerasSection() {
                   {device.grantedTo.length === 0 ? (
                     <Text className="mb-3 text-sm">No one has access yet.</Text>
                   ) : (
-                    <ul className="mb-3 space-y-1">
-                      {device.grantedTo.map((grant) => (
-                        <li key={grant.grantId} className="flex items-center justify-between text-sm">
-                          <span className="text-zinc-700 dark:text-zinc-300">{grant.clerkUserId}</span>
-                          <Button plain disabled={busy} onClick={() => handleRevoke(grant.grantId)}>
-                            Revoke
-                          </Button>
-                        </li>
-                      ))}
+                    <ul className="mb-3 space-y-2">
+                      {device.grantedTo.map((grant) => {
+                        const profile = userProfiles[grant.clerkUserId]
+                        const displayName =
+                          [profile?.firstName, profile?.lastName].filter(Boolean).join(' ') ||
+                          profile?.emailAddress ||
+                          grant.clerkUserId
+                        const initials =
+                          [profile?.firstName?.[0], profile?.lastName?.[0]].filter(Boolean).join('') || '?'
+                        return (
+                          <li key={grant.grantId} className="flex items-center justify-between text-sm">
+                            <div className="flex items-center gap-2">
+                              {profile?.imageUrl ? (
+                                <img
+                                  src={profile.imageUrl}
+                                  alt={displayName}
+                                  className="size-6 shrink-0 rounded-full object-cover outline -outline-offset-1 outline-black/10 dark:outline-white/10"
+                                />
+                              ) : (
+                                <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-[10px] font-medium text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">
+                                  {initials}
+                                </div>
+                              )}
+                              <span className="text-zinc-700 dark:text-zinc-300">{displayName}</span>
+                            </div>
+                            <Button plain disabled={busy} onClick={() => handleRevoke(grant.grantId)}>
+                              Revoke
+                            </Button>
+                          </li>
+                        )
+                      })}
                     </ul>
                   )}
                   <div className="flex max-w-sm gap-2">

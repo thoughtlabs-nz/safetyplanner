@@ -100,6 +100,20 @@ export const revokeDeviceAccess = mutation({
   },
 });
 
+// Cast via globalThis rather than referencing the ambient `process` global
+// directly — apps/web's tsconfig type-checks this file transitively
+// (through convex/_generated/api) and doesn't include Node's ambient types,
+// so a bare `process` reference fails there even though it resolves fine in
+// Convex's own (Node-based) action runtime.
+function requireClerkSecretKey(): string {
+  const secretKey = (globalThis as { process?: { env: Record<string, string | undefined> } })
+    .process?.env.CLERK_SECRET_KEY;
+  if (!secretKey) {
+    throw new Error("CLERK_SECRET_KEY is not configured on this Convex deployment");
+  }
+  return secretKey;
+}
+
 // Resolves an email to a Clerk user id via Clerk's Backend API so the admin
 // UI can grant access without needing to know raw Clerk user ids. Runs
 // server-side only — CLERK_SECRET_KEY must never reach the client.
@@ -107,16 +121,7 @@ export const lookupClerkUserByEmail = action({
   args: { email: v.string() },
   handler: async (ctx, { email }): Promise<{ clerkUserId: string; email: string } | null> => {
     await requireAdmin(ctx);
-    // Cast via globalThis rather than referencing the ambient `process`
-    // global directly — apps/web's tsconfig type-checks this file
-    // transitively (through convex/_generated/api) and doesn't include
-    // Node's ambient types, so a bare `process` reference fails there even
-    // though it resolves fine in Convex's own (Node-based) action runtime.
-    const secretKey = (globalThis as { process?: { env: Record<string, string | undefined> } })
-      .process?.env.CLERK_SECRET_KEY;
-    if (!secretKey) {
-      throw new Error("CLERK_SECRET_KEY is not configured on this Convex deployment");
-    }
+    const secretKey = requireClerkSecretKey();
     const res = await fetch(
       `https://api.clerk.com/v1/users?email_address=${encodeURIComponent(email)}`,
       { headers: { Authorization: `Bearer ${secretKey}` } },
@@ -127,5 +132,54 @@ export const lookupClerkUserByEmail = action({
     const users = (await res.json()) as Array<{ id: string }>;
     if (users.length === 0) return null;
     return { clerkUserId: users[0].id, email };
+  },
+});
+
+export interface ClerkUserProfile {
+  clerkUserId: string;
+  firstName?: string;
+  lastName?: string;
+  imageUrl?: string;
+  emailAddress?: string;
+}
+
+// Resolves a batch of Clerk user ids to display profiles (name, avatar,
+// primary email) for the admin "Access" list, which otherwise only has raw
+// clerkUserId strings (see userDeviceAccess) — nothing user-facing about a
+// grant is stored in Convex itself. Runs server-side only, same as
+// lookupClerkUserByEmail — CLERK_SECRET_KEY must never reach the client.
+export const userProfiles = action({
+  args: { clerkUserIds: v.array(v.string()) },
+  handler: async (ctx, { clerkUserIds }): Promise<ClerkUserProfile[]> => {
+    await requireAdmin(ctx);
+    if (clerkUserIds.length === 0) return [];
+    const secretKey = requireClerkSecretKey();
+
+    const params = new URLSearchParams();
+    for (const id of clerkUserIds) params.append("user_id[]", id);
+    const res = await fetch(`https://api.clerk.com/v1/users?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${secretKey}` },
+    });
+    if (!res.ok) {
+      throw new Error(`Clerk API error: ${res.status} ${await res.text()}`);
+    }
+    const users = (await res.json()) as Array<{
+      id: string;
+      first_name?: string;
+      last_name?: string;
+      image_url?: string;
+      email_addresses?: { id: string; email_address: string }[];
+      primary_email_address_id?: string;
+    }>;
+
+    return users.map((u) => ({
+      clerkUserId: u.id,
+      firstName: u.first_name ?? undefined,
+      lastName: u.last_name ?? undefined,
+      imageUrl: u.image_url ?? undefined,
+      emailAddress:
+        u.email_addresses?.find((e) => e.id === u.primary_email_address_id)?.email_address ??
+        u.email_addresses?.[0]?.email_address,
+    }));
   },
 });
