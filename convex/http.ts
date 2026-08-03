@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api } from "./_generated/api";
 import { requireIdentity } from "./lib/authz";
+import type { Id } from "./_generated/dataModel";
 
 const http = httpRouter();
 
@@ -92,12 +93,24 @@ http.route({
       if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
         return json({ error: "startTime and endTime query params are required" }, 400);
       }
-      const [fixes, events, maxG] = await Promise.all([
+      // Optional because a trip built before multi-camera support has no
+      // cameraId — same reason the web page skips its obdSamples query for
+      // those trips. The samples feed the iOS battery section, mirroring
+      // the web page's JourneyBattery.
+      const cameraId = url.searchParams.get("cameraId");
+      const [fixes, events, maxG, obdSamples] = await Promise.all([
         ctx.runQuery(api.gpsFixes.forTimeRange, { startTime, endTime }),
         ctx.runQuery(api.events.forTimeRangeWithThumbnails, { startTime, endTime }),
         ctx.runAction(api.accelSamples.maxInRange, { startTime, endTime }),
+        cameraId
+          ? ctx.runQuery(api.obdSamples.forTimeRange, {
+              cameraId: cameraId as Id<"cameras">,
+              startTime,
+              endTime,
+            })
+          : Promise.resolve(null),
       ]);
-      return json({ fixes, events, maxG }, 200);
+      return json({ fixes, events, maxG, obdSamples }, 200);
     } catch (err) {
       return json({ error: errorMessage(err) }, 401);
     }
