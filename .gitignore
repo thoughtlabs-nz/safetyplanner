@@ -7,3 +7,4 @@ storage/
 
 # Its own separate git repo — never track it here, even as a submodule.
 apps/safety-planner-ios/
+graphify-out/
