@@ -9,7 +9,18 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: thoughtlabs-nz/policycodex@main
+      # policycodex is a private repo under a personal GitHub account, so
+      # `uses: thoughtlabs-nz/policycodex@main` can't be resolved directly
+      # from here (that cross-repo access policy only exists for
+      # organization-owned repos). Check it out with a scoped PAT instead,
+      # then run the action from the local path.
+      - name: Check out PolicyCodex action
+        uses: actions/checkout@v4
+        with:
+          repository: thoughtlabs-nz/policycodex
+          token: ${{ secrets.POLICYCODEX_REPO_TOKEN }}
+          path: .policycodex
+      - uses: ./.policycodex/apps/action
         with:
           api-base-url: ${{ secrets.POLICYCODEX_API_BASE }}
           api-key: ${{ secrets.POLICYCODEX_API_KEY }}
