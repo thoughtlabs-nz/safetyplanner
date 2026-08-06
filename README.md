@@ -62,3 +62,5 @@ Notes:
 - Event classification (impact vs. parking vs. manual) currently defaults to
   `"other"`; the camera's event API response likely carries a type field to
   map once samples are available.
+
+<!-- PolicyCodex check trigger test -->
