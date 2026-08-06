@@ -1,0 +1,15 @@
+name: PolicyCodex
+
+on:
+  pull_request:
+
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: thoughtlabs-nz/policycodex@main
+        with:
+          api-base-url: ${{ secrets.POLICYCODEX_API_BASE }}
+          api-key: ${{ secrets.POLICYCODEX_API_KEY }}
