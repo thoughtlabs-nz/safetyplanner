@@ -82,3 +82,43 @@ export const insertBatch = mutation({
     }
   },
 });
+
+// Fixes strictly older than `timestamp`, newest-first. Used by
+// journeys.rebuild to walk backwards from its fixed-size window until it
+// finds a gap big enough to be a trip boundary — without this the window's
+// oldest trip is whatever fragment the 5000-fix cutoff happened to slice
+// through, and that fragment would collide with the full journey backfill
+// already built for the same drive.
+export const before = query({
+  args: { timestamp: v.number(), limit: v.number() },
+  handler: async (ctx, { timestamp, limit }) => {
+    const fixes = await ctx.db
+      .query("gpsFixes")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", timestamp))
+      .order("desc")
+      .take(limit);
+    return fixes.sort((a, b) => a.timestamp - b.timestamp);
+  },
+});
+
+// One page of fixes at/after `startTime` (optionally stopping before
+// `endTime`), oldest-first — the forward scan journeys.backfill walks to
+// rebuild trips that fell off the back of rebuild's recent-fix window.
+export const pageFrom = query({
+  args: {
+    startTime: v.number(),
+    endTime: v.optional(v.number()),
+    cursor: v.union(v.string(), v.null()),
+    numItems: v.number(),
+  },
+  handler: async (ctx, { startTime, endTime, cursor, numItems }) => {
+    return await ctx.db
+      .query("gpsFixes")
+      .withIndex("by_timestamp", (q) =>
+        endTime === undefined
+          ? q.gte("timestamp", startTime)
+          : q.gte("timestamp", startTime).lt("timestamp", endTime),
+      )
+      .paginate({ numItems, cursor });
+  },
+});
