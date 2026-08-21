@@ -714,17 +714,32 @@ export default function Journeys() {
 
   const selectedTrip = trips?.find((t) => t.startTime === selectedStart) ?? trips?.[0]
 
+  // cameraId is passed through so the route drawn here is only this
+  // vehicle's fixes. Journeys built before multi-camera support have none;
+  // those fall back to the time-only match rather than rendering an empty map.
   const fixes = useQuery(
     api.gpsFixes.forTimeRange,
     selectedTrip
-      ? { startTime: selectedTrip.startTime, endTime: selectedTrip.endTime }
+      ? {
+          cameraId: selectedTrip.cameraId,
+          startTime: selectedTrip.startTime,
+          endTime: selectedTrip.endTime,
+        }
       : 'skip',
   )
 
+  // Same camera scoping as the fixes above. The query also pulls in events
+  // just outside the trip's range — the camera records an event the moment it
+  // powers up, minutes before its GPS locks and the journey can start — and
+  // marks those `adjacent` so they can be shown as bracketing the drive.
   const tripEvents = useQuery(
     api.events.forTimeRangeWithThumbnails,
     selectedTrip
-      ? { startTime: selectedTrip.startTime, endTime: selectedTrip.endTime }
+      ? {
+          cameraId: selectedTrip.cameraId,
+          startTime: selectedTrip.startTime,
+          endTime: selectedTrip.endTime,
+        }
       : 'skip',
   )
 

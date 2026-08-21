@@ -147,7 +147,11 @@ export default defineSchema({
   })
     .index("by_gpsFileId", ["gpsFileId"])
     .index("by_recordingId", ["recordingId"])
-    .index("by_timestamp", ["timestamp"]),
+    .index("by_timestamp", ["timestamp"])
+    // Trip queries go through this one: a journey belongs to one vehicle, so
+    // drawing its route from a bare time range would splice in whatever else
+    // happened to be driving at that moment.
+    .index("by_camera_timestamp", ["cameraId", "timestamp"]),
 
   // Raw accelerometer (G-sensor) readings from the camera's GPS files —
   // $GSENSOR sentences, sampled at ~15Hz (x/y/z in g, magnitude precomputed
@@ -299,6 +303,14 @@ export default defineSchema({
 
   events: defineTable({
     recordingId: v.id("recordings"),
+    // Denormalized from the event's recording at insert time so a trip can
+    // ask for "this camera's events in this window" as one index range.
+    // Without it events matched on time alone, which on a multi-camera
+    // account puts one vehicle's events on another's trip — the same trap
+    // obdSamples avoids with by_camera_timestamp. Optional because rows
+    // created before this existed have no camera recorded;
+    // events.backfillCameraId fills those in from their recording.
+    cameraId: v.optional(v.id("cameras")),
     type: v.union(
       v.literal("impact"),
       v.literal("parking"),
@@ -311,7 +323,8 @@ export default defineSchema({
     lng: v.optional(v.number()),
   })
     .index("by_recordingId", ["recordingId"])
-    .index("by_timestamp", ["timestamp"]),
+    .index("by_timestamp", ["timestamp"])
+    .index("by_camera_timestamp", ["cameraId", "timestamp"]),
 
   // Singleton settings row (app-wide config editable from the Settings
   // page), e.g. the Overpass API endpoint/key used for OSM speed-limit

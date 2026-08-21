@@ -231,7 +231,12 @@ async function handleEvents(cameraId: Id<"cameras">, msg: EventListMessage): Pro
       durationSeconds: Math.max(0, Math.round((endTime - startTime) / 1000)),
       sizeBytes: entry.bvideosize !== undefined ? Number(entry.bvideosize) : undefined,
     });
-    await convex.mutation(api.events.create, { recordingId, type: "other", timestamp: startTime });
+    await convex.mutation(api.events.create, {
+      recordingId,
+      cameraId,
+      type: "other",
+      timestamp: startTime,
+    });
     listed += 1;
     // The thumbnail bytes themselves arrive separately on the `thumbnail`
     // topic (they're forwarded as soon as the bridge downloads them, which

@@ -343,6 +343,7 @@ async function syncEventsMetadata(session: CameraSession): Promise<number> {
 
     await convex.mutation(api.events.create, {
       recordingId,
+      cameraId,
       type: "other",
       timestamp: startTime,
     });

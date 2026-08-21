@@ -38,9 +38,27 @@ export const forRecording = query({
 
 // Fetches fixes for a single derived trip (see convex/journeys.ts) by its
 // start/end timestamp range, for rendering that trip's route on the map.
+//
+// Pass cameraId whenever the trip has one: a journey belongs to one vehicle,
+// and a bare time range would splice another camera's fixes into this trip's
+// polyline the moment two vehicles are driven at once. Optional because
+// journeys built before multi-camera support have no camera to scope by, and
+// because journeys.deleteRange filters the results itself.
 export const forTimeRange = query({
-  args: { startTime: v.number(), endTime: v.number() },
-  handler: async (ctx, { startTime, endTime }) => {
+  args: {
+    cameraId: v.optional(v.id("cameras")),
+    startTime: v.number(),
+    endTime: v.number(),
+  },
+  handler: async (ctx, { cameraId, startTime, endTime }) => {
+    if (cameraId) {
+      return await ctx.db
+        .query("gpsFixes")
+        .withIndex("by_camera_timestamp", (q) =>
+          q.eq("cameraId", cameraId).gte("timestamp", startTime).lte("timestamp", endTime),
+        )
+        .collect();
+    }
     return await ctx.db
       .query("gpsFixes")
       .withIndex("by_timestamp", (q) => q.gte("timestamp", startTime).lte("timestamp", endTime))
